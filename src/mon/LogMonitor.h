@@ -70,8 +70,14 @@ private:
                                const string &change_to);
 
     bool do_log_to_syslog(const string &channel) {
-      return (get_str_map_key(log_to_syslog, channel,
-                              &CLOG_CONFIG_DEFAULT_KEY) == "true");
+      string v = get_str_map_key(log_to_syslog, channel,
+                                 &CLOG_CONFIG_DEFAULT_KEY);
+      // We expect booleans, but they are in k/v pairs, kept
+      // as strings, in 'log_to_syslog'. We must check for
+      // both 'true' and '1' to maintain compatibility with
+      // proper booleans than are passed through the config
+      // options. Everything else will be 'false'.
+      return (v == "true" || v == "1");
     }
 
     string get_facility(const string &channel) {
