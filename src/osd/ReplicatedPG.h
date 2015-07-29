@@ -1201,8 +1201,7 @@ protected:
 
   void queue_for_recovery();
   bool start_recovery_ops(
-    int max, RecoveryCtx *prctx,
-    ThreadPool::TPHandle &handle, int *started);
+    int max, ThreadPool::TPHandle &handle, int *started);
 
   int recover_primary(int max, ThreadPool::TPHandle &handle);
   int recover_replicas(int max, ThreadPool::TPHandle &handle);
