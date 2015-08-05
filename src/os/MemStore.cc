@@ -327,7 +327,6 @@ int MemStore::read(
   return o->read(offset, l, bl);
 }
 
-
 int MemStore::fiemap(coll_t cid, const ghobject_t& oid,
 		     uint64_t offset, size_t len, bufferlist& bl)
 {
@@ -1426,22 +1425,26 @@ int MemStore::BufferlistObject::truncate(uint64_t size)
 }
 
 // PageSetObject
+
+// use a thread-local vector for the pages returned by PageSet, so we
+// can avoid allocations in read/write()
+thread_local PageSet::page_vector MemStore::PageSetObject::tls_pages;
+
 int MemStore::PageSetObject::read(uint64_t offset, size_t len, bufferlist& bl)
 {
   const auto start = offset;
   const size_t end = offset + len;
   size_t remaining = len;
 
-  PageSet::page_vector pages;
-  data.get_range(offset, len, pages);
+  data.get_range(offset, len, tls_pages);
 
   // allocate a buffer for the data
   buffer::ptr buf(len);
 
-  auto p = pages.begin();
+  auto p = tls_pages.begin();
   while (remaining) {
     // no more pages in range
-    if (p == pages.end() || (*p)->offset >= end) {
+    if (p == tls_pages.end() || (*p)->offset >= end) {
       buf.zero(offset - start, remaining);
       break;
     }
@@ -1470,6 +1473,8 @@ int MemStore::PageSetObject::read(uint64_t offset, size_t len, bufferlist& bl)
     ++p;
   }
 
+  tls_pages.clear(); // drop page refs
+
   bl.append(buf);
   return len;
 }
@@ -1479,10 +1484,9 @@ int MemStore::PageSetObject::write(uint64_t offset, const bufferlist &src)
   unsigned len = src.length();
 
   // make sure the page range is allocated
-  PageSet::page_vector pages;
-  data.alloc_range(offset, src.length(), pages);
+  data.alloc_range(offset, src.length(), tls_pages);
 
-  auto page = pages.begin();
+  auto page = tls_pages.begin();
 
   // XXX: cast away the const because bufferlist doesn't have a const_iterator
   auto p = const_cast<bufferlist&>(src).begin();
@@ -1496,6 +1500,7 @@ int MemStore::PageSetObject::write(uint64_t offset, const bufferlist &src)
     if (count == pageoff)
       ++page;
   }
+  tls_pages.clear(); // drop page refs
   return 0;
 }
 
