@@ -111,7 +111,7 @@ void ReplicatedPG::OpContext::start_async_reads(ReplicatedPG *pg)
   pg->pgbackend->objects_read_async(
     obc->obs.oi.soid,
     pending_async_reads,
-    new OnReadComplete(pg, this));
+    new OnReadComplete(pg, this), pg->get_pool().fast_read);
   pending_async_reads.clear();
 }
 void ReplicatedPG::OpContext::finish_read(ReplicatedPG *pg)
@@ -1874,7 +1874,8 @@ bool ReplicatedPG::maybe_handle_cache(OpRequestRef op,
 	// Check if in other hit sets
 	map<time_t,HitSetRef>::iterator itor;
 	bool in_other_hit_sets = false;
-	for (itor = agent_state->hit_set_map.begin(); itor != agent_state->hit_set_map.end(); ++itor) {
+        uint32_t count = pool.info.min_read_recency_for_promote > 0 ? pool.info.min_read_recency_for_promote - 1 : 0;
+	for (itor = agent_state->hit_set_map.begin(); itor != agent_state->hit_set_map.end() && count--; ++itor) {
           if (obc.get()) {
             if (obc->obs.oi.soid != hobject_t() && itor->second->contains(obc->obs.oi.soid)) {
               in_other_hit_sets = true;
@@ -2116,6 +2117,9 @@ void ReplicatedPG::cancel_proxy_read(ProxyReadOpRef prdop)
   // cancel objecter op, if we can
   if (prdop->objecter_tid) {
     osd->objecter->op_cancel(prdop->objecter_tid, -ECANCELED);
+    for (uint32_t i = 0; i < prdop->ops.size(); i++) {
+      prdop->ops[i].outdata.clear();
+    }
     proxyread_ops.erase(prdop->objecter_tid);
     prdop->objecter_tid = 0;
   }
@@ -6046,6 +6050,8 @@ int ReplicatedPG::fill_in_copy_get(
     reply_obj.flags |= object_copy_data_t::FLAG_OMAP_DIGEST;
     reply_obj.omap_digest = oi.omap_digest;
   }
+  reply_obj.truncate_seq = oi.truncate_seq;
+  reply_obj.truncate_size = oi.truncate_size;
 
   // attrs
   map<string,bufferlist>& out_attrs = reply_obj.attrs;
@@ -6245,6 +6251,8 @@ void ReplicatedPG::_copy_some(ObjectContextRef obc, CopyOpRef cop)
 	      &cop->results.source_data_digest,
 	      &cop->results.source_omap_digest,
 	      &cop->results.reqids,
+	      &cop->results.truncate_seq,
+	      &cop->results.truncate_size,
 	      &cop->rval);
   op.set_last_op_flags(cop->src_obj_fadvise_flags);
 
@@ -6400,13 +6408,13 @@ void ReplicatedPG::process_copy_chunk(hobject_t oid, ceph_tid_t tid, int r)
 
   // cancel and requeue proxy reads on this object
   if (!r) {
-    kick_proxy_read_blocked(cobc->obs.oi.soid);
     for (map<ceph_tid_t, ProxyReadOpRef>::iterator it = proxyread_ops.begin();
 	it != proxyread_ops.end(); ++it) {
       if (it->second->soid == cobc->obs.oi.soid) {
 	cancel_proxy_read(it->second);
       }
     }
+    kick_proxy_read_blocked(cobc->obs.oi.soid);
   }
 
   kick_object_context_blocked(cobc);
@@ -6724,11 +6732,15 @@ void ReplicatedPG::finish_promote(int r, CopyResults *results,
     }
     tctx->new_obs.oi.size = results->object_size;
     tctx->new_obs.oi.user_version = results->user_version;
+
     // Don't care src object whether have data or omap digest
     if (results->object_size)
       tctx->new_obs.oi.set_data_digest(results->data_digest);
     if (results->has_omap)
       tctx->new_obs.oi.set_omap_digest(results->omap_digest);
+
+    tctx->new_obs.oi.truncate_seq = results->truncate_seq;
+    tctx->new_obs.oi.truncate_size = results->truncate_size;
 
     if (soid.snap != CEPH_NOSNAP) {
       tctx->new_obs.oi.snaps = results->snaps;
@@ -10362,7 +10374,11 @@ void ReplicatedPG::hit_set_persist()
 
   if (agent_state) {
     agent_state->add_hit_set(info.hit_set.current_info.begin, hit_set);
-    hit_set_in_memory_trim();
+    uint32_t size = agent_state->hit_set_map.size();
+    if (size >= pool.info.hit_set_count) {
+      size = pool.info.hit_set_count > 0 ? pool.info.hit_set_count - 1: 0;
+    }
+    hit_set_in_memory_trim(size);
   }
 
   // hold a ref until it is flushed to disk
@@ -10518,14 +10534,8 @@ void ReplicatedPG::hit_set_trim(RepGather *repop, unsigned max)
   }
 }
 
-void ReplicatedPG::hit_set_in_memory_trim()
+void ReplicatedPG::hit_set_in_memory_trim(uint32_t max_in_memory)
 {
-  unsigned max = pool.info.hit_set_count;
-  unsigned max_in_memory = pool.info.min_read_recency_for_promote > 0 ? pool.info.min_read_recency_for_promote - 1 : 0;
-
-  if (max_in_memory > max) {
-    max_in_memory = max;
-  }
   while (agent_state->hit_set_map.size() > max_in_memory) {
     agent_state->remove_oldest_hit_set();
   }
@@ -10730,7 +10740,7 @@ bool ReplicatedPG::agent_work(int start_max, int agent_flush_quota)
     agent_state->position = next;
 
   // Discard old in memory HitSets
-  hit_set_in_memory_trim();
+  hit_set_in_memory_trim(pool.info.hit_set_count);
 
   if (need_delay) {
     assert(agent_state->delaying == false);
