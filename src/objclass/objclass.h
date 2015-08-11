@@ -35,6 +35,7 @@ void __cls_init();
 
 typedef void *cls_handle_t;
 typedef void *cls_method_handle_t;
+typedef void *cls_filter_handle_t;
 typedef void *cls_method_context_t;
 typedef int (*cls_method_call_t)(cls_method_context_t ctx,
 				 char *indata, int datalen,
@@ -71,6 +72,7 @@ extern int cls_unregister(cls_handle_t);
 extern int cls_register_method(cls_handle_t hclass, const char *method, int flags,
                         cls_method_call_t class_call, cls_method_handle_t *handle);
 extern int cls_unregister_method(cls_method_handle_t handle);
+extern int cls_unregister_filter(cls_filter_handle_t handle);
 
 
 
