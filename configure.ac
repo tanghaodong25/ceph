@@ -10,6 +10,8 @@ AC_PREREQ(2.59)
 
 AC_INIT([ceph], [9.0.2], [ceph-devel@vger.kernel.org])
 
+AX_CXX_COMPILE_STDCXX_11(, mandatory)
+
 # Create release string.  Used with VERSION for RPMs.
 RPM_RELEASE=0
 AC_SUBST(RPM_RELEASE)
@@ -962,6 +964,9 @@ AC_CHECK_FUNC([sync_file_range],
 AC_CHECK_FUNC([fallocate],
 	[AC_DEFINE([CEPH_HAVE_FALLOCATE], [], [fallocate(2) is supported])],
 	[])
+
+# getgrouplist
+AC_CHECK_FUNCS([getgrouplist])
 
 #
 # Test for time-related `struct stat` members.

@@ -161,10 +161,10 @@ void usage()
 "  lock add <image-spec> <id> [--shared <tag>] take a lock called id on an image\n"
 "  lock remove <image-spec> <id> <locker>      release a lock on an image\n"
 "  bench-write <image-spec>                    simple write benchmark\n"
-"                 --io-size <bytes>              write size\n"
-"                 --io-threads <num>             ios in flight\n"
-"                 --io-total <bytes>             total bytes to write\n"
-"                 --io-pattern <seq|rand>        write pattern\n"
+"               --io-size <size in B/K/M/G/T>    write size\n"
+"               --io-threads <num>               ios in flight\n"
+"               --io-total <size in B/K/M/G/T>   total size to write\n"
+"               --io-pattern <seq|rand>          write pattern\n"
 "\n"
 "<image-spec> is [<pool-name>]/<image-name>,\n"
 "<snap-spec> is [<pool-name>]/<image-name>@<snap-name>,\n"
@@ -188,7 +188,7 @@ void usage()
 "                                     use multiple times to enable multiple features\n"
 "  --image-shared                     image will be used concurrently (disables\n"
 "                                     RBD exclusive lock and dependent features)\n"
-"  --stripe-unit <size-in-bytes>      size (in bytes) of a block of data\n"
+"  --stripe-unit <size in B/K/M>      size of a block of data\n"
 "  --stripe-count <num>               number of consecutive objects in a stripe\n"
 "  --id <username>                    rados user (without 'client.'prefix) to\n"
 "                                     authenticate as\n"
@@ -3000,6 +3000,7 @@ int main(int argc, const char **argv)
   long long bench_io_size = 4096, bench_io_threads = 16, bench_bytes = 1 << 30;
   string bench_pattern = "seq";
   bool diff_whole_object = false;
+  bool input_feature = false;
 
   std::string val, parse_err;
   std::ostringstream err;
@@ -3056,7 +3057,17 @@ int main(int argc, const char **argv)
       size_set = true;
     } else if (ceph_argparse_flag(args, i, "-l", "--long", (char*)NULL)) {
       lflag = true;
-    } else if (ceph_argparse_witharg(args, i, &stripe_unit, err, "--stripe-unit", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--stripe-unit", (char*)NULL)) {
+      if (!err.str().empty()) {
+        cerr << "rbd: " << err.str() << std::endl;
+        return EXIT_FAILURE;
+      }
+      const char *stripeval = val.c_str();
+      stripe_unit = strict_sistrtoll(stripeval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --stripe-unit " << parse_err << std::endl;
+        return EXIT_FAILURE;
+      }
     } else if (ceph_argparse_witharg(args, i, &stripe_count, err, "--stripe-count", (char*)NULL)) {
     } else if (ceph_argparse_witharg(args, i, &order, err, "--order", (char*)NULL)) {
       if (!err.str().empty()) {
@@ -3067,17 +3078,33 @@ int main(int argc, const char **argv)
 	cerr << "rbd: order must be between 12 (4 KB) and 25 (32 MB)" << std::endl;
 	return EXIT_FAILURE;
       }
-    } else if (ceph_argparse_witharg(args, i, &bench_io_size, err, "--io-size", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--io-size", (char*)NULL)) {
       if (!err.str().empty()) {
 	cerr << "rbd: " << err.str() << std::endl;
 	return EXIT_FAILURE;
+      }
+      const char *iosval = val.c_str();
+      bench_io_size = strict_sistrtoll(iosval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --io-size " << parse_err << std::endl;
+        return EXIT_FAILURE;
       }
       if (bench_io_size == 0) {
 	cerr << "rbd: io-size must be > 0" << std::endl;
 	return EXIT_FAILURE;
       }
     } else if (ceph_argparse_witharg(args, i, &bench_io_threads, err, "--io-threads", (char*)NULL)) {
-    } else if (ceph_argparse_witharg(args, i, &bench_bytes, err, "--io-total", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, err, "--io-total", (char*)NULL)) {
+      if (!err.str().empty()) {
+       cerr << "rbd: " << err.str() << std::endl;
+       return EXIT_FAILURE;
+      }
+      const char *iotval = val.c_str();
+      bench_bytes = strict_sistrtoll(iotval, &parse_err);
+      if (!parse_err.empty()) {
+        cerr << "rbd: error parsing --io-total " << parse_err << std::endl;
+        return EXIT_FAILURE;
+      }
     } else if (ceph_argparse_witharg(args, i, &bench_pattern, "--io-pattern", (char*)NULL)) {
     } else if (ceph_argparse_witharg(args, i, &val, "--path", (char*)NULL)) {
       path = strdup(val.c_str());
@@ -3100,6 +3127,7 @@ int main(int argc, const char **argv)
       resize_allow_shrink = true;
     } else if (ceph_argparse_witharg(args, i, &val, "--image-feature", (char *)NULL)) {
       uint64_t feature;
+      input_feature = true;
       if (!decode_feature(val.c_str(), &feature)) {
         cerr << "rbd: invalid image feature: " << val << std::endl;
         return EXIT_FAILURE;
@@ -3109,6 +3137,7 @@ int main(int argc, const char **argv)
       cerr << "rbd: using --image-features for specifying the rbd image format is"
 	   << " deprecated, use --image-feature instead" << std::endl;
       features = strict_strtol(val.c_str(), 10, &parse_err);
+      input_feature = true;
       if (!parse_err.empty()) {
 	cerr << "rbd: error parsing --image-features: " << parse_err
              << std::endl;
@@ -3619,6 +3648,10 @@ if (!set_conf_param(v, p1, p2, p3)) { \
     break;
 
   case OPT_CREATE:
+    if (input_feature && (format == 1)){
+      cerr << "feature not allowed with format 1; use --image-format 2" << std::endl;
+      return EINVAL;
+    }
     r = do_create(rbd, io_ctx, imgname, size, &order, format, features,
 		  stripe_unit, stripe_count);
     if (r < 0) {

@@ -134,14 +134,14 @@ inline bool operator<=(const osd_reqid_t& l, const osd_reqid_t& r) {
 inline bool operator>(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l <= r); }
 inline bool operator>=(const osd_reqid_t& l, const osd_reqid_t& r) { return !(l < r); }
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash<osd_reqid_t> {
     size_t operator()(const osd_reqid_t &r) const { 
       static hash<uint64_t> H;
       return H(r.name.num() ^ r.tid ^ r.inc);
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 
 // -----
@@ -399,7 +399,7 @@ inline bool operator>=(const pg_t& l, const pg_t& r) {
 
 ostream& operator<<(ostream& out, const pg_t &pg);
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash< pg_t >
   {
     size_t operator()( const pg_t& x ) const
@@ -408,7 +408,7 @@ CEPH_HASH_NAMESPACE_START
       return H((x.pool() & 0xffffffff) ^ (x.pool() >> 32) ^ x.ps() ^ x.preferred());
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 struct spg_t {
   pg_t pgid;
@@ -480,7 +480,7 @@ WRITE_CLASS_ENCODER(spg_t)
 WRITE_EQ_OPERATORS_2(spg_t, pgid, shard)
 WRITE_CMP_OPERATORS_2(spg_t, pgid, shard)
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash< spg_t >
   {
     size_t operator()( const spg_t& x ) const
@@ -489,7 +489,7 @@ CEPH_HASH_NAMESPACE_START
       return H(hash<pg_t>()(x.pgid) ^ x.shard);
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 ostream& operator<<(ostream& out, const spg_t &pg);
 
@@ -623,7 +623,7 @@ inline ostream& operator<<(ostream& out, const coll_t& c) {
   return out;
 }
 
-CEPH_HASH_NAMESPACE_START
+namespace std {
   template<> struct hash<coll_t> {
     size_t operator()(const coll_t &c) const { 
       size_t h = 0;
@@ -640,7 +640,7 @@ CEPH_HASH_NAMESPACE_START
       return h;
     }
   };
-CEPH_HASH_NAMESPACE_END
+} // namespace std
 
 inline ostream& operator<<(ostream& out, const ceph_object_layout &ol)
 {
@@ -1325,6 +1325,11 @@ struct object_stat_sum_t {
   int64_t num_objects_omap;
   int64_t num_objects_hit_set_archive;
   int64_t num_bytes_hit_set_archive;
+  int64_t num_flush;
+  int64_t num_flush_kb;
+  int64_t num_evict;
+  int64_t num_evict_kb;
+  int64_t num_promote;
 
   object_stat_sum_t()
     : num_bytes(0),
@@ -1342,7 +1347,12 @@ struct object_stat_sum_t {
       num_whiteouts(0),
       num_objects_omap(0),
       num_objects_hit_set_archive(0),
-      num_bytes_hit_set_archive(0)
+      num_bytes_hit_set_archive(0),
+      num_flush(0),
+      num_flush_kb(0),
+      num_evict(0),
+      num_evict_kb(0),
+      num_promote(0)
   {}
 
   void floor(int64_t f) {
@@ -1370,6 +1380,11 @@ struct object_stat_sum_t {
     FLOOR(num_objects_omap);
     FLOOR(num_objects_hit_set_archive);
     FLOOR(num_bytes_hit_set_archive);
+    FLOOR(num_flush);
+    FLOOR(num_flush_kb);
+    FLOOR(num_evict);
+    FLOOR(num_evict_kb);
+    FLOOR(num_promote);
 #undef FLOOR
   }
 
@@ -1405,6 +1420,11 @@ struct object_stat_sum_t {
     SPLIT(num_objects_omap);
     SPLIT(num_objects_hit_set_archive);
     SPLIT(num_bytes_hit_set_archive);
+    SPLIT(num_flush);
+    SPLIT(num_flush_kb);
+    SPLIT(num_evict);
+    SPLIT(num_evict_kb);
+    SPLIT(num_promote);
 #undef SPLIT
   }
 

@@ -504,7 +504,8 @@ void ReplicatedPG::wait_for_blocked_object(const hobject_t& soid, OpRequestRef o
   op->mark_delayed("waiting for blocked object");
 }
 
-bool PGLSParentFilter::filter(bufferlist& xattr_data, bufferlist& outdata)
+bool PGLSParentFilter::filter(const hobject_t &obj,
+                              bufferlist& xattr_data, bufferlist& outdata)
 {
   bufferlist::iterator iter = xattr_data.begin();
   inode_backtrace_t bt;
@@ -525,7 +526,8 @@ bool PGLSParentFilter::filter(bufferlist& xattr_data, bufferlist& outdata)
   return false;
 }
 
-bool PGLSPlainFilter::filter(bufferlist& xattr_data, bufferlist& outdata)
+bool PGLSPlainFilter::filter(const hobject_t &obj,
+                             bufferlist& xattr_data, bufferlist& outdata)
 {
   if (val.size() != xattr_data.length())
     return false;
@@ -539,15 +541,22 @@ bool PGLSPlainFilter::filter(bufferlist& xattr_data, bufferlist& outdata)
 bool ReplicatedPG::pgls_filter(PGLSFilter *filter, hobject_t& sobj, bufferlist& outdata)
 {
   bufferlist bl;
-  int ret = pgbackend->objects_get_attr(
-    sobj,
-    filter->get_xattr(),
-    &bl);
-  dout(0) << "getattr (sobj=" << sobj << ", attr=" << filter->get_xattr() << ") returned " << ret << dendl;
-  if (ret < 0)
-    return false;
 
-  return filter->filter(bl, outdata);
+  // If filter has expressed an interest in an xattr, load it.
+  if (!filter->get_xattr().empty()) {
+    int ret = pgbackend->objects_get_attr(
+      sobj,
+      filter->get_xattr(),
+      &bl);
+    dout(0) << "getattr (sobj=" << sobj << ", attr=" << filter->get_xattr() << ") returned " << ret << dendl;
+    if (ret < 0) {
+      if (ret != -ENODATA || filter->reject_empty_xattr()) {
+        return false;
+      }
+    }
+  }
+
+  return filter->filter(sobj, bl, outdata);
 }
 
 int ReplicatedPG::get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilter)
@@ -834,7 +843,6 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	  current,
 	  list_size,
 	  list_size,
-	  snapid,
 	  &sentries,
 	  &next);
 	if (r != 0) {
@@ -992,7 +1000,6 @@ void ReplicatedPG::do_pg_op(OpRequestRef op)
 	  current,
 	  list_size,
 	  list_size,
-	  snapid,
 	  &sentries,
 	  &next);
 	if (r != 0) {
@@ -1252,6 +1259,7 @@ void ReplicatedPG::do_request(
 	     << " flushes_in_progress pending "
 	     << "waiting for active on " << op << dendl;
     waiting_for_peered.push_back(op);
+    op->mark_delayed("waiting for peered");
     return;
   }
 
@@ -1263,6 +1271,7 @@ void ReplicatedPG::do_request(
       return;
     } else {
       waiting_for_peered.push_back(op);
+      op->mark_delayed("waiting for peered");
       return;
     }
   }
@@ -1276,6 +1285,7 @@ void ReplicatedPG::do_request(
     if (!is_active()) {
       dout(20) << " peered, not active, waiting for active on " << op << dendl;
       waiting_for_active.push_back(op);
+      op->mark_delayed("waiting for active");
       return;
     }
     if (is_replay()) {
@@ -2213,6 +2223,7 @@ void ReplicatedPG::promote_object(ObjectContextRef obc,
 
   if (op)
     wait_for_blocked_object(obc->obs.oi.soid, op);
+  info.stats.stats.sum.num_promote++;
 }
 
 void ReplicatedPG::execute_ctx(OpContext *ctx)
@@ -5743,9 +5754,7 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 	  ctx->snapset_obc->obs.exists = false;
 	}
       }
-    } else if (ctx->new_snapset.clones.size() &&
-	       !ctx->cache_evict &&
-	       (!ctx->snapset_obc || !ctx->snapset_obc->obs.exists)) {
+    } else if (ctx->new_snapset.clones.size() && !ctx->cache_evict) {
       // save snapset on _snap
       hobject_t snapoid(soid.oid, soid.get_key(), CEPH_SNAPDIR, soid.get_hash(),
 			info.pgid.pool(), soid.get_namespace());
@@ -5773,6 +5782,9 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       } else if (!pool.info.require_rollback()) {
 	ctx->log.back().mod_desc.mark_unrollbackable();
       }
+      if (!ctx->snapset_obc->obs.exists) {
+        ctx->op_t->touch(snapoid);
+      }
       ctx->snapset_obc->obs.exists = true;
       ctx->snapset_obc->obs.oi.version = ctx->at_version;
       ctx->snapset_obc->obs.oi.last_reqid = ctx->reqid;
@@ -5781,7 +5793,6 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
 
       bufferlist bv(sizeof(ctx->new_obs.oi));
       ::encode(ctx->snapset_obc->obs.oi, bv);
-      ctx->op_t->touch(snapoid);
       setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, OI_ATTR, bv);
       setattr_maybe_cache(ctx->snapset_obc, ctx, ctx->op_t, SS_ATTR, bss);
       if (pool.info.require_rollback()) {
@@ -6071,13 +6082,14 @@ int ReplicatedPG::fill_in_copy_get(
   bufferlist& bl = reply_obj.data;
   if (left > 0 && !cursor.data_complete) {
     if (cursor.data_offset < oi.size) {
+      left = MIN(oi.size - cursor.data_offset, (uint64_t)left);
       if (cb) {
 	async_read_started = true;
 	ctx->pending_async_reads.push_back(
 	  make_pair(
 	    boost::make_tuple(cursor.data_offset, left, osd_op.op.flags),
 	    make_pair(&bl, cb)));
-	result = MIN(oi.size - cursor.data_offset, (uint64_t)left);
+        result = left;
 	cb->len = result;
       } else {
 	result = pgbackend->objects_read_sync(
@@ -7055,6 +7067,8 @@ int ReplicatedPG::start_flush(
   fop->objecter_tid = tid;
 
   flush_ops[soid] = fop;
+  info.stats.stats.sum.num_flush++;
+  info.stats.stats.sum.num_flush_kb += SHIFT_ROUND_UP(oi.size, 10);
   return -EINPROGRESS;
 }
 
@@ -10084,7 +10098,7 @@ void ReplicatedPG::scan_range(
 
   vector<hobject_t> ls;
   ls.reserve(max);
-  int r = pgbackend->objects_list_partial(bi->begin, min, max, 0, &ls, &bi->end);
+  int r = pgbackend->objects_list_partial(bi->begin, min, max, &ls, &bi->end);
   assert(r >= 0);
   dout(10) << " got " << ls.size() << " items, next " << bi->end << dendl;
   dout(20) << ls << dendl;
@@ -10619,7 +10633,6 @@ bool ReplicatedPG::agent_work(int start_max, int agent_flush_quota)
   vector<hobject_t> ls;
   hobject_t next;
   int r = pgbackend->objects_list_partial(agent_state->position, ls_min, ls_max,
-					  0 /* no filtering by snapid */,
 					  &ls, &next);
   assert(r >= 0);
   dout(20) << __func__ << " got " << ls.size() << " objects" << dendl;
@@ -10952,6 +10965,8 @@ bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc)
   int r = _delete_oid(ctx, true);
   if (obc->obs.oi.is_omap())
     ctx->delta_stats.num_objects_omap--;
+  ctx->delta_stats.num_evict++;
+  ctx->delta_stats.num_evict_kb += SHIFT_ROUND_UP(obc->obs.oi.size, 10);
   assert(r == 0);
   finish_ctx(ctx, pg_log_entry_t::DELETE, false);
   simple_repop_submit(repop);

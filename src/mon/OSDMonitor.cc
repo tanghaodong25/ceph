@@ -1362,13 +1362,13 @@ bool OSDMonitor::preprocess_get_osdmap(MonOpRequestRef op)
   epoch_t last = osdmap.get_epoch();
   int max = g_conf->osd_map_message_max;
   for (epoch_t e = MAX(first, m->get_full_first());
-       e < MIN(last, m->get_full_last()) && max > 0;
+       e <= MIN(last, m->get_full_last()) && max > 0;
        ++e, --max) {
     int r = get_version_full(e, reply->maps[e]);
     assert(r >= 0);
   }
   for (epoch_t e = MAX(first, m->get_inc_first());
-       e < MIN(last, m->get_inc_last()) && max > 0;
+       e <= MIN(last, m->get_inc_last()) && max > 0;
        ++e, --max) {
     int r = get_version(e, reply->incremental_maps[e]);
     assert(r >= 0);
@@ -3627,6 +3627,22 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       if (!f && !rss.str().empty())
         tss << "  client io " << rss.str() << "\n";
 
+      // dump cache tier IO rate for cache pool
+      const pg_pool_t *pool = osdmap.get_pg_pool(poolid);
+      if (pool->is_tier()) {
+        if (f) {
+          f->close_section();
+          f->open_object_section("cache_io_rate");
+        }
+
+        rss.clear();
+        rss.str("");
+
+        pg_map.pool_cache_io_rate_summary(f.get(), &rss, poolid);
+        if (!f && !rss.str().empty())
+          tss << "  cache tier io " << rss.str() << "\n";
+      }
+
       if (f) {
         f->close_section();
         f->close_section();
@@ -4360,7 +4376,7 @@ int OSDMonitor::get_crush_ruleset(const string &ruleset_name,
  * @param pg_num The pg_num to use. If set to 0, will use the system default
  * @param pgp_num The pgp_num to use. If set to 0, will use the system default
  * @param erasure_code_profile The profile name in OSDMap to be used for erasure code
- * @param pool_type TYPE_ERASURE, TYPE_REP or TYPE_RAID4
+ * @param pool_type TYPE_ERASURE, or TYPE_REP
  * @param expected_num_objects expected number of objects on the pool
  * @param ss human readable error message, if any.
  *
@@ -4629,7 +4645,7 @@ int OSDMonitor::prepare_command_pool_set(map<string,cmd_vartype> &cmdmap,
        if (err == 0) {
 	 k = erasure_code->get_data_chunk_count();
        } else {
-	 ss << __func__ << " get_erasure_code failed: " << tmp;
+	 ss << __func__ << " get_erasure_code failed: " << tmp.rdbuf();
 	 return err;;
        }
 

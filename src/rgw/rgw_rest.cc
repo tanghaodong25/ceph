@@ -232,8 +232,8 @@ static bool rgw_find_host_in_domains(const string& host, string *domain, string 
     if (!str_ends_with(host, *iter, &pos))
       continue;
 
-    *domain = host.substr(pos);
     if (pos == 0) {
+      *domain = host;
       subdomain->clear();
     } else {
       if (host[pos - 1] != '.') {
@@ -500,7 +500,7 @@ void dump_start(struct req_state *s)
 void dump_trans_id(req_state *s)
 {
   if (s->prot_flags & RGW_REST_SWIFT) {
-    s->cio->print("X-Trans-Id: ts-%s\r\n", s->trans_id.c_str());
+    s->cio->print("X-Trans-Id: %s\r\n", s->trans_id.c_str());
   }
   else {
     s->cio->print("x-amz-request-id: %s\r\n", s->trans_id.c_str());
