@@ -1913,6 +1913,11 @@ void Client::send_request(MetaRequest *request, MetaSession *session,
       r->releases.swap(request->cap_releases);
   }
   r->set_mdsmap_epoch(mdsmap->get_epoch());
+  if (r->head.op == CEPH_MDS_OP_SETXATTR) {
+    const OSDMap *osdmap = objecter->get_osdmap_read();
+    r->set_osdmap_epoch(osdmap->get_epoch());
+    objecter->put_osdmap_read();
+  }
 
   if (request->mds == -1) {
     request->sent_stamp = ceph_clock_now(cct);
