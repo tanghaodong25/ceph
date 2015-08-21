@@ -83,11 +83,7 @@ check_SCRIPTS += \
 	test/mon/mon-handle-forward.sh \
 	test/libradosstriper/rados-striper.sh
 
-if ENABLE_ROOT_MAKE_CHECK
-check_SCRIPTS += test/ceph-disk-root.sh
-else
 check_SCRIPTS += test/ceph-disk.sh
-endif
 
 EXTRA_DIST += \
 	$(srcdir)/test/python/ceph-disk/setup.py \
@@ -120,13 +116,7 @@ EXTRA_DIST += \
         $(srcdir)/test/coverage.sh \
 	$(patsubst %,$(srcdir)/%,$(check_SCRIPTS))
 
-docker-check:
-	$(srcdir)/test/container-make-check-ubuntu-14.04.sh
-	$(srcdir)/test/container-make-check-centos-centos7.sh
-
-EXTRA_DIST += \
-	$(srcdir)/test/container-make-check-ubuntu-14.04.sh
-	$(srcdir)/test/container-make-check-centos-centos7.sh
+#revert 2d0d388162fba25af828ad2cb16560a6d00f2337
 
 # target to build but not run the unit tests
 unittests:: $(check_PROGRAMS)
