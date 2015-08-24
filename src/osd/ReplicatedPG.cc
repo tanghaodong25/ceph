@@ -9450,8 +9450,7 @@ void PG::MissingLoc::check_recovery_sources(const OSDMapRef osdmap)
   
 
 bool ReplicatedPG::start_recovery_ops(
-  int max, RecoveryCtx *prctx,
-  ThreadPool::TPHandle &handle,
+  int max, ThreadPool::TPHandle &handle,
   int *ops_started)
 {
   int& started = *ops_started;
@@ -9561,7 +9560,6 @@ bool ReplicatedPG::start_recovery_ops(
   }
 
   if (state_test(PG_STATE_RECOVERING)) {
-    state_clear(PG_STATE_RECOVERING);
     if (needs_backfill()) {
       dout(10) << "recovery done, queuing backfill" << dendl;
       queue_peering_event(
@@ -9580,7 +9578,6 @@ bool ReplicatedPG::start_recovery_ops(
             AllReplicasRecovered())));
     }
   } else { // backfilling
-    state_clear(PG_STATE_BACKFILL);
     dout(10) << "recovery done, backfill done" << dendl;
     queue_peering_event(
       CephPeeringEvtRef(
