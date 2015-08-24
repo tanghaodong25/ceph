@@ -1394,7 +1394,8 @@ static simple_spinlock_t buffer_debug_lock = SIMPLE_SPINLOCK_INITIALIZER;
     }
     _memcopy_count += pos;
     _buffers.clear();
-    _buffers.push_back(nb);
+    if (nb.length())
+      _buffers.push_back(nb);
     invalidate_crc();
   }
 
