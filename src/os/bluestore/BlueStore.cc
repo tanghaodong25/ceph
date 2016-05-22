@@ -4955,19 +4955,9 @@ void BlueStore::_pad_zeros(
   size_t front_pad = *offset % block_size;
   size_t back_pad = 0;
   if (front_pad) {
-    size_t front_copy = MIN(block_size - front_pad, *length);
-    bufferptr z = buffer::create_page_aligned(block_size);
-    memset(z.c_str(), 0, front_pad);
-    memcpy(z.c_str() + front_pad, bl->get_contiguous(0, front_copy), front_copy);
-    if (front_copy + front_pad < block_size) {
-      back_pad = block_size - (*length + front_pad);
-      memset(z.c_str() + front_pad + *length, 0, back_pad);
-    }
-    bufferlist old, t;
-    old.swap(*bl);
-    t.substr_of(old, front_copy, *length - front_copy);
-    bl->append(z);
-    bl->claim_append(t);
+    bufferlist zeros;
+    zeros->append_zero(front_pad);
+    bl->claim_append(zeros);
     *offset -= front_pad;
     *length += front_pad + back_pad;
   }
@@ -4979,14 +4969,9 @@ void BlueStore::_pad_zeros(
     assert(back_pad == 0);
     back_pad = block_size - back_copy;
     assert(back_copy <= *length);
-    bufferptr tail(block_size);
-    memcpy(tail.c_str(), bl->get_contiguous(*length - back_copy, back_copy),
-	   back_copy);
-    memset(tail.c_str() + back_copy, 0, back_pad);
-    bufferlist old;
-    old.swap(*bl);
-    bl->substr_of(old, 0, *length - back_copy);
-    bl->append(tail);
+    bufferlist zeros;
+    zeros->append_zero(back_pad);
+    bl->claim_append(zeros);
     *length += back_pad;
     if (end >= o->onode.size && g_conf->bluestore_cache_tails) {
       o->tail_bl.clear();
@@ -5014,23 +4999,13 @@ void BlueStore::_pad_zeros_head(
   *_dout << dendl;
   size_t front_pad = *offset % block_size;
   assert(front_pad);  // or we wouldn't have been called
-  size_t front_copy = MIN(block_size - front_pad, *length);
-  bufferptr z;
-  if (front_copy + front_pad < block_size)
-    z = buffer::create(front_copy + front_pad);
-  else
-    z = buffer::create_page_aligned(block_size);
-  memset(z.c_str(), 0, front_pad);
-  memcpy(z.c_str() + front_pad, bl->get_contiguous(0, front_copy), front_copy);
-  bufferlist old, t;
-  old.swap(*bl);
-  bl->append(z);
-  if (front_copy < *length) {
-    t.substr_of(old, front_copy, *length - front_copy);
-    bl->claim_append(t);
-  }
+
+  bufferlist zeros;
+  zeros->append_zero(front_pad);
+  bl->claim_prepend(zeros);
   *offset -= front_pad;
   *length += front_pad;
+
   dout(20) << __func__ << " pad " << front_pad
 	   << " on front, now " << *offset << "~" << *length << dendl;
   dout(40) << "after:\n";
@@ -5062,15 +5037,11 @@ void BlueStore::_pad_zeros_tail(
     tail_len = block_size - (offset % block_size);
   }
   uint64_t back_pad = tail_len - back_copy;
-  bufferptr tail(tail_len);
-  memcpy(tail.c_str(), bl->get_contiguous(*length - back_copy, back_copy),
-	 back_copy);
-  memset(tail.c_str() + back_copy, 0, back_pad);
-  bufferlist old;
-  old.swap(*bl);
-  bl->substr_of(old, 0, *length - back_copy);
-  bl->append(tail);
+  bufferlist zeros;
+  zeros->append_zero(back_pad);
+  bl->claim_append(zeros);
   *length += back_pad;
+
   if (tail_len == block_size &&
       end >= o->onode.size && g_conf->bluestore_cache_tails) {
     o->tail_bl.clear();
