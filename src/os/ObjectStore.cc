@@ -24,6 +24,7 @@
 #include "bluestore/BlueStore.h"
 #endif
 #include "kstore/KStore.h"
+#include "include/os/libobjectstore.hpp"
 
 void decode_str_str_map_to_bl(bufferlist::iterator& p,
 			      bufferlist *out)

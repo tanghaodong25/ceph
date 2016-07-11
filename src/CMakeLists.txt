@@ -788,6 +788,7 @@ if(${HAVE_LIBXFS})
 endif(${HAVE_LIBXFS})
 set(libos_srcs
   os/ObjectStore.cc
+  os/OptionImpl.cc
   os/Transaction.cc
   os/filestore/chain_xattr.cc
   os/filestore/BtrfsFileStoreBackend.cc
@@ -867,7 +868,7 @@ set(ROCKSDB_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/src/rocksdb/include)
 
 add_subdirectory(kv)
 
-add_library(os STATIC ${libos_srcs} $<TARGET_OBJECTS:kv_objs>)
+add_library(os ${CEPH_SHARED} ${libos_srcs} $<TARGET_OBJECTS:kv_objs>)
 if(${HAVE_LIBAIO})
   target_link_libraries(os aio)
 endif(${HAVE_LIBAIO})
@@ -888,6 +889,9 @@ if(WITH_LTTNG)
   add_dependencies(os os-tp)
 endif()
 target_link_libraries(os kv)
+target_link_libraries(os common)
+target_link_libraries(os global)
+
 if(HAVE_LIBAIO)
   add_executable(ceph-bluefs-tool
     os/bluestore/bluefs_tool.cc)
@@ -897,6 +901,8 @@ if(HAVE_LIBAIO)
     DESTINATION bin)
 endif()
 add_dependencies(os compressor_plugins)
+
+install(TARGETS os DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
 set(cls_references_files objclass/class_api.cc)
 add_library(cls_references_objs OBJECT ${cls_references_files})
