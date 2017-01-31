@@ -142,6 +142,7 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   void fault();
   ssize_t submit(bool more);
   void fin();
+  void abort_connection();
   int get_gid_idx();
   void register_qp(QueuePair *qp);
   void notify();

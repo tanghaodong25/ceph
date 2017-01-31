@@ -18,6 +18,7 @@
 #define CEPH_INFINIBAND_H
 
 #include <infiniband/verbs.h>
+#include <rdma/rdma_cma.h>
 
 #include <string>
 #include <vector>

@@ -113,21 +113,16 @@ Port::~Port()
 }
 
 
-Device::Device(CephContext *cct, Infiniband *ib, ibv_device* d)
-  : cct(cct), device(d), lock("ibdev_lock"),
+Device::Device(CephContext *cct, Infiniband *ib, struct ibv_context *ctxt)
+  : cct(cct), device(ctxt->device), lock("ibdev_lock"),
     async_handler(new C_handle_cq_async(this)), infiniband(ib),
-    device_attr(new ibv_device_attr)
+    ctxt(ctxt), device_attr(new ibv_device_attr)
 {
   if (device == NULL) {
     lderr(cct) << __func__ << " device == NULL" << cpp_strerror(errno) << dendl;
     ceph_abort();
   }
   name = ibv_get_device_name(device);
-  ctxt = ibv_open_device(device);
-  if (ctxt == NULL) {
-    lderr(cct) << __func__ << " open rdma device failed. " << cpp_strerror(errno) << dendl;
-    ceph_abort();
-  }
   int r = ibv_query_device(ctxt, device_attr);
   if (r == -1) {
     lderr(cct) << __func__ << " failed to query rdma device. " << cpp_strerror(errno) << dendl;
@@ -223,7 +218,6 @@ Device::~Device()
     delete ports[i];
   delete[] ports;
 
-  assert(ibv_close_device(ctxt) == 0);
   delete device_attr;
 }
 
@@ -404,7 +398,7 @@ void Device::handle_async_event()
 
 
 DeviceList::DeviceList(CephContext *cct, Infiniband *ib)
-  : cct(cct), device_list(ibv_get_device_list(&num))
+  : cct(cct), device_list(rdma_get_devices(&num))
 {
   if (device_list == NULL || num == 0) {
     lderr(cct) << __func__ << " failed to get rdma device list.  " << cpp_strerror(errno) << dendl;
@@ -443,7 +437,7 @@ DeviceList::~DeviceList()
     delete devices[i];
   }
   delete []devices;
-  ibv_free_device_list(device_list);
+  rdma_free_devices(device_list);
 }
 
 Device* DeviceList::get_device(const char* device_name)

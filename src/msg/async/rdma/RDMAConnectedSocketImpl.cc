@@ -707,3 +707,9 @@ void RDMAConnectedSocketImpl::fault()
   cmgr->connected = 1;
   notify();
 }
+
+void RDMAConnectedSocketImpl::abort_connection()
+{
+  error = ECONNABORTED;
+  notify();
+}
