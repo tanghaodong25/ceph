@@ -168,6 +168,10 @@ class RDMAServerSocketImpl : public ServerSocketImpl {
  public:
   RDMAServerSocketImpl(CephContext *cct, Infiniband* i, RDMADispatcher *s, RDMAWorker *w, entity_addr_t& a);
 
+  static RDMAServerSocketImpl *factory(CephContext *cct, Infiniband *ib,
+                                       RDMADispatcher *s, RDMAWorker *w,
+                                       entity_addr_t& a);
+
   virtual int listen(entity_addr_t &sa, const SocketOptions &opt) = 0;
   virtual int accept(ConnectedSocket *s, const SocketOptions &opts, entity_addr_t *out, Worker *w) = 0;
   virtual void abort_accept() = 0;

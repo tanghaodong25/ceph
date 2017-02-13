@@ -19,6 +19,7 @@
 #include "Device.h"
 #include "RDMAConnectedSocketImpl.h"
 #include "RDMAConnTCP.h"
+#include "RDMAConnCM.h"
 
 #define dout_subsys ceph_subsys_ms
 #undef dout_prefix
@@ -51,7 +52,10 @@ RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* i
   notify_fd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
   assert(notify_fd >= 0);
 
-  cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
+  if (cct->_conf->ms_async_rdma_cm)
+    cmgr = new RDMAConnCM(cct, this, ib, s, w, info);
+  else
+    cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
 }
 
 int RDMAConnMgr::create_queue_pair()
