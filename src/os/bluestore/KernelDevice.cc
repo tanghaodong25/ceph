@@ -427,6 +427,29 @@ void KernelDevice::aio_submit(IOContext *ioc)
   }
 }
 
+int KernelDevice::write(uint64_t offset, bufferlist& bl, IOContext *ioc) {
+  uint32_t len = bl.length();
+  //dout(20) << __func__ << " offset: " << offset << "~length: " << len << dendl;
+  vector<iovec> iov;
+  bl.prepare_iov(&iov);
+  int r = ::pwritev(fd_buffered, &iov[0], iov.size(), offset);
+  if (r < 0) {
+    r = -errno;
+    derr << __func__ << " pwritev error: " << cpp_strerror(r) << dendl;
+    return r;
+  }
+  if (true) {
+    // initiate IO (but do not wait)
+    r = ::sync_file_range(fd_buffered, offset, len, SYNC_FILE_RANGE_WRITE);
+    if (r < 0) {
+      r = -errno;
+      derr << __func__ << " sync_file_range error: " << cpp_strerror(r) << dendl;
+      return r;
+    }
+  }
+  return 0;
+}
+
 int KernelDevice::aio_write(
   uint64_t off,
   bufferlist &bl,

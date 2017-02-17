@@ -1026,6 +1026,10 @@ OPTION(bluestore_spdk_coremask, OPT_STR, "0x3")
 OPTION(bluestore_block_path, OPT_STR, "")
 OPTION(bluestore_block_size, OPT_U64, 10 * 1024*1024*1024)  // 10gb for testing
 OPTION(bluestore_block_create, OPT_BOOL, true)
+OPTION(bluestore_log, OPT_BOOL, false)
+OPTION(bluestore_block_log_path, OPT_STR, "")
+OPTION(bluestore_block_log_size, OPT_U64, 0)
+OPTION(bluestore_block_log_create, OPT_BOOL, false)
 OPTION(bluestore_block_db_path, OPT_STR, "")
 OPTION(bluestore_block_db_size, OPT_U64, 0)   // rocksdb ssts (hot/warm)
 OPTION(bluestore_block_db_create, OPT_BOOL, false)
@@ -1079,7 +1083,9 @@ OPTION(bluestore_cache_meta_ratio, OPT_DOUBLE, .9)
 OPTION(bluestore_kvbackend, OPT_STR, "rocksdb")
 OPTION(bluestore_allocator, OPT_STR, "bitmap")     // stupid | bitmap
 OPTION(bluestore_freelist_type, OPT_STR, "bitmap") // extent | bitmap
+OPTION(bluestore_log_freelist_type, OPT_STR, "bitmap")
 OPTION(bluestore_freelist_blocks_per_key, OPT_INT, 128)
+OPTION(bluestore_log_allocator, OPT_STR, "bitmap")
 OPTION(bluestore_bitmapallocator_blocks_per_zone, OPT_INT, 1024) // must be power of 2 aligned, e.g., 512, 1024, 2048...
 OPTION(bluestore_bitmapallocator_span_size, OPT_INT, 1024) // must be power of 2 aligned, e.g., 512, 1024, 2048...
 OPTION(bluestore_rocksdb_options, OPT_STR, "compression=kNoCompression,max_write_buffer_number=4,min_write_buffer_number_to_merge=1,recycle_log_file_num=4,write_buffer_size=268435456,writable_file_max_buffer_size=0")

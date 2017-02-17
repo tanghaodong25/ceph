@@ -116,6 +116,7 @@ public:
     bufferlist& bl,
     IOContext *ioc,
     bool buffered) = 0;
+  virtual int write(uint64_t offset, bufferlist& bl, IOContext *ioc) = 0;
   virtual int flush() = 0;
 
   void queue_reap_ioc(IOContext *ioc);

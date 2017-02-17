@@ -93,6 +93,7 @@ public:
   int aio_write(uint64_t off, bufferlist& bl,
 		IOContext *ioc,
 		bool buffered) override;
+  int write(uint64_t offset, bufferlist& bl, IOContext *ioc) override;
   int flush() override;
 
   // for managing buffered readers/writers

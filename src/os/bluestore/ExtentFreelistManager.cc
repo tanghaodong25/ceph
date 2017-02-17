@@ -20,7 +20,7 @@ int ExtentFreelistManager::create(uint64_t size, KeyValueDB::Transaction txn)
 
 int ExtentFreelistManager::init()
 {
-  dout(1) << __func__ << dendl;
+  dout(1) << __func__ << " prefix is: " << prefix << dendl;
 
   // load state from kvstore
   KeyValueDB::Transaction txn = kvdb->get_transaction();
@@ -67,7 +67,7 @@ int ExtentFreelistManager::init()
     }
 
     kv_free[offset] = length;
-    dout(20) << __func__ << "  " << offset << "~" << length << dendl;
+    dout(20) << __func__ << " prefix is: " << prefix << " "<< offset << "~" << length << dendl;
 
     last_offset = offset;
     last_length = length;

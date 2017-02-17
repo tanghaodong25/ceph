@@ -15,11 +15,11 @@ FreelistManager *FreelistManager::create(
   // put the freelistmanagers in different prefixes because the merge
   // op is per prefix, has to done pre-db-open, and we don't know the
   // freelist type until after we open the db.
-  assert(prefix == "B");
+  //assert(prefix == "B");
   if (type == "extent")
-    return new ExtentFreelistManager(cct, kvdb, "B");
+    return new ExtentFreelistManager(cct, kvdb, prefix);
   if (type == "bitmap")
-    return new BitmapFreelistManager(cct, kvdb, "B", "b");
+    return new BitmapFreelistManager(cct, kvdb, prefix, "b");
   return NULL;
 }
 

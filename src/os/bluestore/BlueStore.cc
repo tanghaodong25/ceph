@@ -56,6 +56,7 @@ const string PREFIX_OBJ = "O";     // object name -> onode_t
 const string PREFIX_OMAP = "M";    // u64 + keyname -> value
 const string PREFIX_WAL = "L";     // id -> wal_transaction_t
 const string PREFIX_ALLOC = "B";   // u64 offset -> u64 length (freelist)
+const string PREFIX_LOG_ALLOC = "G";    // u64 offset -> u64 length (freelist)
 const string PREFIX_SHARED_BLOB = "X"; // u64 offset -> shared_blob_t
 
 // write a label in the first block.  always use this size.  note that
@@ -3117,14 +3118,22 @@ static void aio_cb(void *priv, void *priv2)
   store->_txc_aio_finish(priv2);
 }
 
+static void aio_log_cb(void *priv, void *priv2)
+{
+  return;
+}
+
 BlueStore::BlueStore(CephContext *cct, const string& path)
   : ObjectStore(cct, path),
     bluefs(NULL),
     bluefs_shared_bdev(0),
     db(NULL),
     bdev(NULL),
+    log(NULL),
     fm(NULL),
+    lfm(NULL),
     alloc(NULL),
+    log_alloc(NULL),
     path_fd(-1),
     fsid_fd(-1),
     mounted(false),
@@ -3654,6 +3663,66 @@ void BlueStore::_close_bdev()
   bdev = NULL;
 }
 
+int BlueStore::_open_log(bool create) {
+  assert(log == NULL); 
+  string p = path + "/block.log";
+  log = BlockDevice::create(cct, p, aio_cb, static_cast<void*>(this));
+  int r = log->open(p);
+  if (r < 0)
+    goto fail;
+
+  log_size = log->get_block_size();
+  log_mask = ~(log_size - 1);
+  log_size_order = ctz(log_size);
+  return 0;
+
+fail:
+  delete log;
+  log = NULL;
+  return r;
+}
+
+void BlueStore::_close_log() {
+  assert(log);
+  log->close();
+  delete log;
+  log = NULL;
+}
+
+int  BlueStore::_open_log_fm(bool create) {
+  assert(lfm == NULL);
+  log_freelist_type = "extent";
+  lfm = FreelistManager::create(cct, log_freelist_type, db, PREFIX_LOG_ALLOC);
+  assert(lfm != NULL);
+  if (create) {
+    // initialize freespace
+    KeyValueDB::Transaction t = db->get_transaction();
+    {
+      bufferlist bl;
+      bl.append(log_freelist_type);
+      t->set(PREFIX_SUPER, "log_freelist_type", bl);
+    }
+    lfm->create(log->get_size(), t);
+    db->submit_transaction_sync(t);
+
+  }
+  int r = lfm->init();
+  if (r < 0) {
+    derr << __func__ << " freelist init failed: " << cpp_strerror(r) << dendl; 
+    delete lfm;
+    lfm = NULL;
+    return r;
+  }
+  return 0;
+}
+
+void BlueStore::_close_log_fm() {
+  assert(lfm);
+  lfm->shutdown();
+  delete lfm;
+  lfm = NULL;
+}
+
 int BlueStore::_open_fm(bool create)
 {
   assert(fm == NULL);
@@ -3790,6 +3859,36 @@ void BlueStore::_close_alloc()
   alloc->shutdown();
   delete alloc;
   alloc = NULL;
+}
+
+int BlueStore::_open_log_alloc() {
+  assert(log_alloc == NULL);
+  assert(log->get_size());
+  log_alloc = Allocator::create(cct, cct->_conf->bluestore_log_allocator,
+                                log->get_size(),
+                                min_alloc_size);
+  assert(log_alloc != NULL);
+  uint64_t num = 0, bytes = 0;
+
+  lfm->enumerate_reset();
+  uint64_t offset, length;
+  while (lfm->enumerate_next(&offset, &length)) {
+    log_alloc->init_add_free(offset, length);
+    ++num;
+    bytes += length;
+  }
+  dout(10) << __func__ << " loaded " << pretty_si_t(bytes)
+	   << " in " << num << " extents"
+	   << dendl;
+
+  return 0;
+}
+
+void BlueStore::_close_log_alloc() {
+  assert(log_alloc != NULL);
+  log_alloc->shutdown();
+  delete log_alloc;
+  log_alloc = NULL;
 }
 
 int BlueStore::_open_fsid(bool create)
@@ -4520,6 +4619,7 @@ int BlueStore::mkfs()
   }
 
   freelist_type = cct->_conf->bluestore_freelist_type;
+  log_freelist_type = cct->_conf->bluestore_log_freelist_type;
 
   r = _open_path();
   if (r < 0)
@@ -4555,6 +4655,13 @@ int BlueStore::mkfs()
   r = _setup_block_symlink_or_file("block", cct->_conf->bluestore_block_path,
 				   cct->_conf->bluestore_block_size,
 				   cct->_conf->bluestore_block_create);
+  if (cct->_conf->bluestore_log) {
+    r = _setup_block_symlink_or_file("block.log", cct->_conf->bluestore_block_log_path, 
+        cct->_conf->bluestore_block_log_size, 
+        cct->_conf->bluestore_block_log_create); 
+    if (r < 0) 
+      goto out_close_fsid;
+  }
   if (r < 0)
     goto out_close_fsid;
   if (cct->_conf->bluestore_bluefs) {
@@ -4573,6 +4680,10 @@ int BlueStore::mkfs()
   r = _open_bdev(true);
   if (r < 0)
     goto out_close_fsid;
+  
+  r = _open_log(true);
+  if (r < 0)
+    goto out_close_log;
 
   r = _open_db(true);
   if (r < 0)
@@ -4581,6 +4692,10 @@ int BlueStore::mkfs()
   r = _open_fm(true);
   if (r < 0)
     goto out_close_db;
+
+  r = _open_log_fm(true);
+  if (r < 0)
+    goto out_close_fm;
 
   {
     KeyValueDB::Transaction t = db->get_transaction();
@@ -4616,7 +4731,11 @@ int BlueStore::mkfs()
 
   r = _open_alloc();
   if (r < 0)
-    goto out_close_fm;
+    goto out_close_log_fm;
+  
+  r = _open_log_alloc();
+  if (r < 0)
+    goto out_close_log_alloc;
 
   r = write_meta("kv_backend", cct->_conf->bluestore_kvbackend);
   if (r < 0)
@@ -4638,15 +4757,21 @@ int BlueStore::mkfs()
   if (r < 0)
     goto out_close_alloc;
   dout(10) << __func__ << " success" << dendl;
-
+  
+ out_close_log_alloc:
+  _close_log_alloc();
  out_close_alloc:
   _close_alloc();
+ out_close_log_fm:
+  _close_log_fm();
  out_close_fm:
   _close_fm();
  out_close_db:
   _close_db();
  out_close_bdev:
   _close_bdev();
+ out_close_log:
+  _close_log();
  out_close_fsid:
   _close_fsid();
  out_path_fd:
@@ -4728,9 +4853,13 @@ int BlueStore::mount()
   if (r < 0)
     goto out_fsid;
 
-  r = _open_db(false);
+  r = _open_log(false);
   if (r < 0)
     goto out_bdev;
+
+  r = _open_db(false);
+  if (r < 0)
+    goto out_log;
 
   r = _open_super_meta();
   if (r < 0)
@@ -4740,13 +4869,21 @@ int BlueStore::mount()
   if (r < 0)
     goto out_db;
 
-  r = _open_alloc();
+  r = _open_log_fm(false);
   if (r < 0)
     goto out_fm;
 
-  r = _open_collections();
+  r = _open_alloc();
+  if (r < 0)
+    goto out_log_fm;
+
+  r = _open_log_alloc();
   if (r < 0)
     goto out_alloc;
+
+  r = _open_collections();
+  if (r < 0)
+    goto out_log_alloc;
 
   r = _reload_logger();
   if (r < 0)
@@ -4786,12 +4923,18 @@ int BlueStore::mount()
   }
  out_coll:
   coll_map.clear();
+ out_log_alloc:
+  _close_log_alloc();
  out_alloc:
   _close_alloc();
+ out_log_fm:
+  _close_log_fm();
  out_fm:
   _close_fm();
  out_db:
   _close_db();
+ out_log:
+  _close_log();
  out_bdev:
   _close_bdev();
  out_fsid:
@@ -4828,9 +4971,12 @@ int BlueStore::umount()
 
   mounted = false;
   _close_alloc();
+  _close_log_alloc();
   _close_fm();
+  _close_log_fm();
   _close_db();
   _close_bdev();
+  _close_log();
   _close_fsid();
   _close_path();
 
@@ -4946,9 +5092,13 @@ int BlueStore::fsck(bool deep)
   if (r < 0)
     goto out_fsid;
 
-  r = _open_db(false);
+  r = _open_log(false);
   if (r < 0)
     goto out_bdev;
+
+  r = _open_db(false);
+  if (r < 0)
+    goto out_log;
 
   r = _open_super_meta();
   if (r < 0)
@@ -4958,13 +5108,21 @@ int BlueStore::fsck(bool deep)
   if (r < 0)
     goto out_db;
 
-  r = _open_alloc();
+  r = _open_log_fm(false);
   if (r < 0)
     goto out_fm;
 
-  r = _open_collections(&errors);
+  r = _open_alloc();
+  if (r < 0)
+    goto out_log_fm;
+
+  r = _open_log_alloc();
   if (r < 0)
     goto out_alloc;
+
+  r = _open_collections(&errors);
+  if (r < 0)
+    goto out_log_alloc;
 
   used_blocks.resize(bdev->get_size() / block_size);
   apply(
@@ -4986,7 +5144,7 @@ int BlueStore::fsck(bool deep)
     r = bluefs->fsck();
     if (r < 0) {
       coll_map.clear();
-      goto out_alloc;
+      goto out_log_alloc;
     }
     if (r > 0)
       errors += r;
@@ -5298,7 +5456,15 @@ int BlueStore::fsck(bool deep)
   if (it) {
     for (it->lower_bound(string()); it->valid(); it->next()) {
       bufferlist bl = it->value();
-      bufferlist::iterator p = bl.begin();
+      bufferlist wal_bl;
+      uint64_t offset;
+      uint32_t length;
+      bufferlist::iterator bl_indexer = wal_bl.begin();
+      ::decode(offset, bl_indexer);
+      ::decode(length, bl_indexer);
+      dout(-1) << __func__ << " offset is: " << offset << ", length is: " << length << dendl;
+      _log_read(offset, length, wal_bl);
+      bufferlist::iterator p = wal_bl.begin();
       bluestore_wal_transaction_t wt;
       try {
 	::decode(wt, p);
@@ -5364,16 +5530,22 @@ int BlueStore::fsck(bool deep)
       ++errors;
     }
   }
-
+  
  out_scan:
   coll_map.clear();
+ out_log_alloc:
+  _close_log_alloc();
  out_alloc:
   _close_alloc();
+ out_log_fm:
+  _close_log_fm();
  out_fm:
   _close_fm();
  out_db:
   it.reset();  // before db is closed
   _close_db();
+ out_log:
+  _close_log();
  out_bdev:
   _close_bdev();
  out_fsid:
@@ -6899,6 +7071,20 @@ int BlueStore::_open_super_meta()
     }
   }
 
+  // log freelist
+  {
+    bufferlist bl;
+    db->get(PREFIX_SUPER, "log_freelist_type", &bl);
+    if (bl.length()) {
+      log_freelist_type = std::string(bl.c_str(), bl.length());
+      dout(10) << __func__ << " log_freelist_type " << log_freelist_type << dendl;
+    } else {
+      log_freelist_type = "extent";
+      dout(10) << __func__ << " log_freelist_type " << log_freelist_type
+	       << " (legacy bluestore instance)" << dendl;
+    }
+  }
+
   // bluefs alloc
   {
     bluefs_extents.clear();
@@ -7744,7 +7930,14 @@ int BlueStore::_wal_replay()
 	     << dendl;
     bluestore_wal_transaction_t *wal_txn = new bluestore_wal_transaction_t;
     bufferlist bl = it->value();
-    bufferlist::iterator p = bl.begin();
+    uint64_t offset;
+    uint32_t length;
+    ::decode(offset, bl);
+    ::decode(length, bl);
+    dout(-1) << __func__ << " offset: " << offset << " length: " << length << dendl;
+    bufferlist wal_bl;
+    _log_read(offset, length, wal_bl);
+    bufferlist::iterator p = wal_bl.begin();
     try {
       ::decode(*wal_txn, p);
     } catch (buffer::error& e) {
@@ -7828,7 +8021,19 @@ int BlueStore::queue_transactions(
     ::encode(*txc->wal_txn, bl);
     string key;
     get_wal_key(txc->wal_txn->seq, &key);
-    txc->t->set(PREFIX_WAL, key, bl);
+    uint64_t offset;
+    uint32_t length;
+    log_write(txc, offset, length, bl);
+    bufferlist bl_index;
+    ::encode(offset, bl_index);
+    ::encode(length, bl_index);
+    txc->t->set(PREFIX_WAL, key, bl_index);
+    uint64_t offset_v;
+    uint32_t length_v;
+    bufferlist::iterator bl_indexer = bl_index.begin();
+    ::decode(offset_v, bl_indexer);
+    ::decode(length_v, bl_indexer);
+    dout(-1) << __func__ << " offset is: " << offset_v << ", length is: " << length_v << dendl;
   }
 
   if (handle)
@@ -8622,6 +8827,41 @@ void BlueStore::_do_write_big(
     length -= l;
     logger->inc(l_bluestore_write_big_blobs);
   }
+}
+
+int BlueStore::log_write(
+  TransContext *txc,
+  uint64_t &offset,
+  uint32_t &length,
+  bufferlist bl) {
+  dout(-1) << __func__ << dendl;
+  uint64_t rawlen = bl.length();
+  uint64_t newlen = P2ROUNDUP(rawlen, min_alloc_size);
+  assert(log_alloc != NULL);
+  int r = log_alloc->reserve(newlen);
+  if (r < 0) {
+    derr << __func__ << " failed to reserve 0x" << std::hex << newlen << std::dec
+	 << dendl;
+    return r;
+  }
+  AllocExtentVector extents;
+  extents.reserve(1);
+  log_alloc->allocate(newlen, newlen, max_alloc_size, 0, &extents);
+  offset = extents[0].offset;
+  length = extents[0].length;
+  dout(-1) << "offset is: " << offset << " and length is: " << length << dendl; 
+  r = log->write(extents[0].offset, bl, &txc->ioc);
+  assert(r == 0);
+  return 0;
+}
+
+int BlueStore::_log_read(uint64_t offset, uint32_t length, bufferlist &bl) {
+  
+  IOContext ioc(cct, NULL);
+  int r = log->read(offset, length, &bl, &ioc, true);
+  if (r < 0)
+    return r;
+  return 0;
 }
 
 int BlueStore::_do_alloc_write(

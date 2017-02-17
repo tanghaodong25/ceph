@@ -1708,9 +1708,13 @@ private:
   unsigned bluefs_shared_bdev;  ///< which bluefs bdev we are sharing
   KeyValueDB *db;
   BlockDevice *bdev;
+  BlockDevice *log;
   std::string freelist_type;
+  std::string log_freelist_type;
   FreelistManager *fm;
+  FreelistManager *lfm;
   Allocator *alloc;
+  Allocator *log_alloc;
   uuid_d fsid;
   int path_fd;  ///< open handle to $path
   int fsid_fd;  ///< open handle (locked) to $path/fsid
@@ -1768,6 +1772,10 @@ private:
   size_t min_alloc_size_order = 0; ///< bits for min_alloc_size
 
   uint64_t max_alloc_size = 0; ///< maximum allocation unit (power of 2)
+
+  uint64_t log_size = 0;
+  uint64_t log_mask = 0;
+  size_t log_size_order = 0;
 
   bool sync_wal_apply;	  ///< see config option bluestore_sync_wal_apply
 
@@ -1831,12 +1839,18 @@ private:
   void _set_alloc_sizes();
   int _open_bdev(bool create);
   void _close_bdev();
+  int _open_log(bool create);
+  void _close_log();
   int _open_db(bool create);
   void _close_db();
   int _open_fm(bool create);
   void _close_fm();
+  int _open_log_fm(bool create);
+  void _close_log_fm();
   int _open_alloc();
   void _close_alloc();
+  int _open_log_alloc();
+  void _close_log_alloc();
   int _open_collections(int *errors=0);
   void _close_collections();
 
@@ -2305,7 +2319,15 @@ private:
     CollectionRef& c,
     OnodeRef o,
     WriteContext *wctx);
-
+  int log_write(
+    TransContext *txc,
+    uint64_t &offset,
+    uint32_t &length,
+    bufferlist bl);
+  int _log_read(
+    uint64_t offset, 
+    uint32_t length, 
+    bufferlist &bl);
   int _do_transaction(Transaction *t,
 		      TransContext *txc,
 		      ThreadPool::TPHandle *handle);
