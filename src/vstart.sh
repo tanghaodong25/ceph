@@ -679,47 +679,47 @@ EOF
 
 if [ "$debug" -eq 0 ]; then
     CMONDEBUG='
-        debug mon = 10
-        debug ms = 1'
+        debug mon = 1
+        debug ms = 29'
     COSDDEBUG='
-        debug ms = 1'
+        debug ms = 29'
     CMDSDEBUG='
-        debug ms = 1'
+        debug ms = 29'
 else
     echo "** going verbose **"
     CMONDEBUG='
-        debug mon = 20
-        debug paxos = 20
-        debug auth = 20
-	debug mgrc = 20
-        debug ms = 1'
+        debug mon = 1
+        debug paxos = 1
+        debug auth = 1
+	debug mgrc = 1
+        debug ms = 29'
     COSDDEBUG='
-        debug ms = 1
-        debug osd = 25
-        debug objecter = 20
-        debug monc = 20
-        debug mgrc = 20
-        debug journal = 20
-        debug filestore = 20
-        debug bluestore = 30
-        debug bluefs = 20
-        debug rocksdb = 10
-        debug bdev = 20
-        debug rgw = 20
-        debug objclass = 20'
+        debug ms = 29
+        debug osd = 1
+        debug objecter = 1
+        debug monc = 1
+        debug mgrc = 1
+        debug journal = 1
+        debug filestore = 1
+        debug bluestore = 1
+        debug bluefs = 1
+        debug rocksdb = 1
+        debug bdev = 1
+        debug rgw = 1
+        debug objclass = 1'
     CMDSDEBUG='
-        debug ms = 1
-        debug mds = 20
-        debug auth = 20
-        debug monc = 20
-        debug mgrc = 20
+        debug ms = 29
+        debug mds = 1
+        debug auth = 1
+        debug monc = 1
+        debug mgrc = 1
         mds debug scatterstat = true
         mds verify scatter = true
         mds log max segments = 2'
     CMGRDEBUG='
-        debug ms = 1
-        debug monc = 20
-        debug mgr = 20'
+        debug ms = 29
+        debug monc = 1
+        debug mgr = 1'
 fi
 
 if [ -n "$MON_ADDR" ]; then
