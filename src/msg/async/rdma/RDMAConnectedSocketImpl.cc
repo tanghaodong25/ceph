@@ -708,7 +708,7 @@ void RDMAConnectedSocketImpl::fault()
     qp = NULL;
     }*/
   error = ECONNRESET;
-  cmgr->connected = 1;
+  cmgr->connected = 0;
   notify();
 }
 
