@@ -52,6 +52,7 @@ class RDMAConnMgr {
 
   virtual void cleanup() = 0;
   virtual int try_connect(const entity_addr_t&, const SocketOptions &opt) = 0;
+  virtual int activate();
 
   void post_read();
 
