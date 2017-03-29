@@ -115,3 +115,18 @@ ostream &RDMAConnTCP::print(ostream &out) const
 {
   return out << "TCP {tcp_fd: " << tcp_fd << "}";
 }
+
+ibv_qp *RDMAConnTCP::qp_create(ibv_pd *pd, ibv_qp_init_attr *qpia)
+{
+    return ibv_create_qp(pd, qpia);
+}
+
+void RDMAConnTCP::qp_to_err()
+{
+  qp->to_dead();
+}
+
+void RDMAConnTCP::qp_destroy()
+{
+    assert(!ibv_destroy_qp(qp->get_qp()));
+}

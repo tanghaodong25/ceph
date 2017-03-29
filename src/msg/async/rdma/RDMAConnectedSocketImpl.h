@@ -60,6 +60,10 @@ class RDMAConnMgr {
 
   int create_queue_pair();
 
+  virtual ibv_qp *qp_create(ibv_pd *pd, ibv_qp_init_attr *qpia) = 0;
+  virtual void qp_to_err() = 0;
+  virtual void qp_destroy() = 0;
+
   void post_read();
 
   virtual void shutdown();

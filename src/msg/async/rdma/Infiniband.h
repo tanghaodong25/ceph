@@ -54,6 +54,7 @@ class Port;
 class Device;
 class DeviceList;
 class RDMADispatcher;
+class RDMAConnMgr;
 
 class Infiniband {
  public:
@@ -215,7 +216,7 @@ class Infiniband {
               int ib_physical_port,  ibv_srq *srq,
               Infiniband::CompletionQueue* txcq,
               Infiniband::CompletionQueue* rxcq,
-              uint32_t max_send_wr, uint32_t max_recv_wr, uint32_t q_key = 0);
+              uint32_t max_send_wr, uint32_t max_recv_wr, RDMAConnMgr *cmgr, uint32_t q_key = 0);
     ~QueuePair();
 
     int init();
@@ -272,6 +273,9 @@ class Infiniband {
     uint32_t     max_recv_wr;
     uint32_t     q_key;
     bool dead;
+    RDMAConnMgr *cmgr;
+
+    void destroy_qp();
   };
 
  public:
@@ -293,7 +297,7 @@ class Infiniband {
 
 inline ostream& operator<<(ostream& out, const Infiniband::QueuePair &qp)
 {
-    return out << qp.get_local_qp_number();
+    return out << std::hex << std::showbase << qp.get_local_qp_number();
 }
 
 #endif

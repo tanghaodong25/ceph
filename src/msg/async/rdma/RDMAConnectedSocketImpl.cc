@@ -42,7 +42,7 @@ RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* i
 
 int RDMAConnMgr::create_queue_pair()
 {
-  qp = ibdev->create_queue_pair(ibport, IBV_QPT_RC);
+  qp = ibdev->create_queue_pair(ibport, IBV_QPT_RC, this);
 
   socket->local_qpn = qp->get_local_qp_number();
 

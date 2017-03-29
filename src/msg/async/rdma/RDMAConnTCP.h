@@ -71,6 +71,10 @@ class RDMAConnTCP : public RDMAConnMgr {
   virtual void cleanup() override;
   virtual int try_connect(const entity_addr_t&, const SocketOptions &opt) override;
   virtual int activate() override;
+
+  virtual ibv_qp *qp_create(ibv_pd *pd, ibv_qp_init_attr *qpia) override;
+  virtual void qp_to_err() override;
+  virtual void qp_destroy() override;
 };
 
 class RDMAServerConnTCP : public RDMAServerSocketImpl {
