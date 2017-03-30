@@ -321,8 +321,11 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
     // FIXME: why not tx?
     if (ibdev->get_memory_manager()->is_tx_buffer(chunk->buffer))
       tx_chunks.push_back(chunk);
-    else
-      ldout(cct, 1) << __func__ << " not tx buffer, chunk " << chunk << dendl;
+    else {
+      RDMAConnMgr *cmgr = reinterpret_cast<RDMAConnMgr *>(chunk);
+      ldout(cct, 1) << __func__ << " got fin: " << *cmgr << dendl;
+      cmgr->qp_to_err();
+    }
   }
 
   perf_logger->inc(l_msgr_rdma_tx_total_wc, n);

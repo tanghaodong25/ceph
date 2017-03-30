@@ -130,3 +130,12 @@ void RDMAConnTCP::qp_destroy()
 {
     assert(!ibv_destroy_qp(qp->get_qp()));
 }
+
+void RDMAConnTCP::set_orphan()
+{
+  cleanup();
+  if (tcp_fd >= 0)
+    ::close(tcp_fd);
+
+  RDMAConnMgr::set_orphan();
+}

@@ -32,6 +32,9 @@ typedef Infiniband::QueuePair QueuePair;
 class RDMAConnMgr {
   friend class RDMAConnectedSocketImpl;
 
+ private:
+  atomic_t refs;
+
  protected:
   CephContext *cct;
   RDMAConnectedSocketImpl *socket;
@@ -49,8 +52,10 @@ class RDMAConnMgr {
 
  public:
   RDMAConnMgr(CephContext *cct, RDMAConnectedSocketImpl *sock,
-	      Infiniband* ib, RDMADispatcher* s, RDMAWorker *w);
+	      Infiniband* ib, RDMADispatcher* s, RDMAWorker *w, int r);
   virtual ~RDMAConnMgr() { };
+
+  virtual void put();
 
   virtual ostream &print(ostream &out) const = 0;
 
@@ -68,6 +73,8 @@ class RDMAConnMgr {
 
   virtual void shutdown();
   void close();
+
+  virtual void set_orphan() { socket = nullptr; put(); };
 };
 inline ostream& operator<<(ostream& out, const RDMAConnMgr &m)
 {

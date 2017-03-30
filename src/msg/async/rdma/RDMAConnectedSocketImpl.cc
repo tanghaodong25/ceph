@@ -25,11 +25,22 @@
 #define dout_prefix *_dout << " RDMAConnectedSocketImpl "
 
 RDMAConnMgr::RDMAConnMgr(CephContext *cct, RDMAConnectedSocketImpl *sock,
-			 Infiniband* ib, RDMADispatcher* s, RDMAWorker *w)
-  : cct(cct), socket(sock), infiniband(ib), dispatcher(s), worker(w),
+			 Infiniband* ib, RDMADispatcher* s, RDMAWorker *w,
+			 int r)
+  : refs(r), cct(cct), socket(sock), infiniband(ib), dispatcher(s), worker(w),
     is_server(false), active(false),
     connected(0)
 {
+}
+
+void RDMAConnMgr::put()
+{
+  int r = refs.dec();
+
+  ldout(cct, 1) << __func__ << " " << *this << ": ref-- = " << r << dendl;
+
+  if (!r)
+    delete this;
 }
 
 RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
@@ -52,7 +63,7 @@ int RDMAConnMgr::create_queue_pair()
 RDMAConnTCP::RDMAConnTCP(CephContext *cct, RDMAConnectedSocketImpl *sock,
 			 Infiniband* ib, RDMADispatcher* s, RDMAWorker *w,
 			 void *_info)
-  : RDMAConnMgr(cct, sock, ib, s, w), con_handler(new C_handle_connection(this))
+  : RDMAConnMgr(cct, sock, ib, s, w, 2), con_handler(new C_handle_connection(this))
 {
   ibdev = ib->get_device(cct->_conf->ms_async_rdma_device_name.c_str());
   ibport = cct->_conf->ms_async_rdma_port_num;
@@ -92,9 +103,6 @@ void RDMAConnectedSocketImpl::register_qp(QueuePair *qp)
 
 RDMAConnTCP::~RDMAConnTCP()
 {
-  cleanup();
-  if (tcp_fd >= 0)
-    ::close(tcp_fd);
 }
 
 RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
@@ -116,7 +124,8 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
     assert(ret == 0);
   }
 
-  delete cmgr;
+  cmgr->set_orphan();
+  cmgr = nullptr;
 }
 
 void RDMAConnectedSocketImpl::pass_wc(std::vector<ibv_wc> &&v)
@@ -262,7 +271,8 @@ int RDMAConnTCP::try_connect(const entity_addr_t& peer_addr, const SocketOptions
 }
 
 void RDMAConnTCP::handle_connection() {
-  ldout(cct, 20) << __func__ << " " << *socket << dendl;
+  ldout(cct, 20) << __func__ << " " << *this << dendl;
+
   int r = recv_msg(cct, tcp_fd, peer_msg);
   if (r < 0) {
     if (r != -EAGAIN) {
@@ -629,10 +639,13 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
   return 0;
 }
 
-void RDMAConnectedSocketImpl::fin() {
+void RDMAConnectedSocketImpl::fin()
+{
+  ldout(cct, 1) << __func__ << " sending FIN " << *this << dendl;
+
   ibv_send_wr wr;
   memset(&wr, 0, sizeof(wr));
-  wr.wr_id = reinterpret_cast<uint64_t>(cmgr->qp);
+  wr.wr_id = reinterpret_cast<uint64_t>(cmgr);
   wr.num_sge = 0;
   wr.opcode = IBV_WR_SEND;
   wr.send_flags = IBV_SEND_SIGNALED;

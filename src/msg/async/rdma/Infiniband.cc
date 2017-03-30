@@ -632,6 +632,7 @@ Device *Infiniband::get_device(const struct ibv_context *ctxt)
 Infiniband::QueuePair::~QueuePair()
 {
   destroy_qp();
+  cmgr->put();
 }
 
 void Infiniband::QueuePair::destroy_qp()

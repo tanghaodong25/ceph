@@ -64,6 +64,8 @@ class RDMAConnTCP : public RDMAConnMgr {
 	      void *info);
   virtual ~RDMAConnTCP();
 
+  virtual void set_orphan() override;
+
   virtual ostream &print(ostream &out) const override;
 
   void set_accept_fd(int sd);
