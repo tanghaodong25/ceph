@@ -14,6 +14,7 @@
  *
  */
 
+#include "Infiniband.h"
 #include "RDMAStack.h"
 #include "Device.h"
 #include "RDMAConnectedSocketImpl.h"
@@ -34,21 +35,18 @@ RDMAConnMgr::RDMAConnMgr(CephContext *cct, RDMAConnectedSocketImpl *sock,
 RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
 						 RDMAWorker *w, void *info)
   : cct(cct), infiniband(ib), dispatcher(s), worker(w),
-    error(0), lock("RDMAConnectedSocketImpl::lock")
+    lock("RDMAConnectedSocketImpl::lock"), error(0)
 {
     cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
 }
 
-QueuePair *RDMAConnectedSocketImpl::create_queue_pair(Device *d, int p)
+int RDMAConnMgr::create_queue_pair()
 {
-  ibdev = d;
-  ibport = p;
-
   qp = ibdev->create_queue_pair(ibport, IBV_QPT_RC);
 
-  local_qpn = qp->get_local_qp_number();
+  socket->local_qpn = qp->get_local_qp_number();
 
-  return qp;
+  return !qp;
 }
 
 RDMAConnTCP::RDMAConnTCP(CephContext *cct, RDMAConnectedSocketImpl *sock,
@@ -56,15 +54,16 @@ RDMAConnTCP::RDMAConnTCP(CephContext *cct, RDMAConnectedSocketImpl *sock,
 			 void *_info)
   : RDMAConnMgr(cct, sock, ib, s, w), con_handler(new C_handle_connection(this))
 {
-  Device *ibdev = ib->get_device(cct->_conf->ms_async_rdma_device_name.c_str());
-  int ibport = cct->_conf->ms_async_rdma_port_num;
+  ibdev = ib->get_device(cct->_conf->ms_async_rdma_device_name.c_str());
+  ibport = cct->_conf->ms_async_rdma_port_num;
 
   assert(ibdev);
   assert(ibport > 0);
 
   ibdev->init(ibport);
 
-  QueuePair *qp = socket->create_queue_pair(ibdev, ibport);
+  int ret = RDMAConnMgr::create_queue_pair();
+  assert(!ret);
 
   my_msg.qpn = socket->local_qpn;
   my_msg.psn = qp->get_initial_psn();
@@ -109,11 +108,11 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
   error = ECONNRESET;
   int ret = 0;
   for (unsigned i=0; i < wc.size(); ++i) {
-    ret = ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
+    ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
     assert(ret == 0);
   }
   for (unsigned i=0; i < buffers.size(); ++i) {
-    ret = ibdev->post_chunk(buffers[i]);
+    ret = cmgr->ibdev->post_chunk(buffers[i]);
     assert(ret == 0);
   }
 
@@ -143,9 +142,6 @@ int RDMAConnTCP::activate()
   ibv_qp_attr qpa;
   int r;
 
-  Device *ibdev = socket->get_device();
-  int ibport = socket->get_ibport();
-
   socket->remote_qpn = peer_msg.qpn;
 
   // now connect up the qps and switch to RTR
@@ -169,8 +165,6 @@ int RDMAConnTCP::activate()
   qpa.ah_attr.port_num = (uint8_t)ibport;
 
   ldout(cct, 20) << __func__ << " Choosing gid_index " << (int)qpa.ah_attr.grh.sgid_index << ", sl " << (int)qpa.ah_attr.sl << dendl;
-
-  QueuePair *qp = socket->get_qp();
 
   r = ibv_modify_qp(qp->get_qp(), &qpa, IBV_QP_STATE |
       IBV_QP_AV |
@@ -333,7 +327,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
 {
   uint64_t i = 0;
   int r = ::read(notify_fd, &i, sizeof(i));
-  ldout(cct, 20) << __func__ << " notify_fd : " << i << " in " << *qp << " r = " << r << dendl;
+  ldout(cct, 20) << __func__ << " notify_fd : " << i << " in " << *this << " r = " << r << dendl;
   if (error)
     return -error;
   ssize_t read = 0;
@@ -345,7 +339,10 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
   if (cqe.empty())
     return read == 0 ? -EAGAIN : read;
 
-  ldout(cct, 20) << __func__ << " poll queue got " << cqe.size() << " responses. QP: " << *qp << dendl;
+  ldout(cct, 20) << __func__ << " poll queue got " << cqe.size() << " responses. " << *this << dendl;
+
+  Device *ibdev = cmgr->ibdev;
+
   for (size_t i = 0; i < cqe.size(); ++i) {
     ibv_wc* response = &cqe[i];
     assert(response->status == IBV_WC_SUCCESS);
@@ -357,7 +354,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
       dispatcher->perf_logger->inc(l_msgr_rdma_rx_fin);
       if (cmgr->connected) {
         error = ECONNRESET;
-        ldout(cct, 20) << __func__ << " got remote close msg..." << dendl;
+        ldout(cct, 1) << __func__ << " got remote close msg..." << dendl;
       }
       assert(ibdev->post_chunk(chunk) == 0);
     } else {
@@ -386,6 +383,8 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
 ssize_t RDMAConnectedSocketImpl::read_buffers(char* buf, size_t len)
 {
   size_t read = 0, tmp = 0;
+  Device *ibdev = cmgr->ibdev;
+
   auto c = buffers.begin();
   for (; c != buffers.end() ; ++c) {
     tmp = (*c)->read(buf+read, len-read);
@@ -468,11 +467,11 @@ ssize_t RDMAConnectedSocketImpl::send(bufferlist &bl, bool more)
     Mutex::Locker l(lock);
     pending_bl.claim_append(bl);
     if (!cmgr->connected) {
-      ldout(cct, 20) << __func__ << " fake send to upper, QP: " << *qp << dendl;
+      ldout(cct, 20) << __func__ << " fake send to upper " << *this << dendl;
       return bytes;
     }
   }
-  ldout(cct, 20) << __func__ << " QP: " << *qp << dendl;
+  ldout(cct, 20) << __func__ << " " << *this << dendl;
   ssize_t r = submit(more);
   if (r < 0 && r != -EAGAIN)
     return r;
@@ -523,6 +522,8 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
     assert(bytes == 0);
     return total_copied;
   };
+
+  Device *ibdev = cmgr->ibdev;
 
   std::vector<Chunk*> tx_buffers;
   std::list<bufferptr>::const_iterator it = pending_bl.buffers().begin();
@@ -576,7 +577,7 @@ ssize_t RDMAConnectedSocketImpl::submit(bool more)
 
 int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
 {
-  ldout(cct, 20) << __func__ << " QP: " << *qp << " " << tx_buffers[0] << dendl;
+  ldout(cct, 20) << __func__ << " " << *this << " " << tx_buffers[0] << dendl;
   vector<Chunk*>::iterator current_buffer = tx_buffers.begin();
   ibv_sge isge[tx_buffers.size()];
   uint32_t current_sge = 0;
@@ -613,6 +614,8 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
     ++current_buffer;
   }
 
+  QueuePair *qp = cmgr->qp;
+
   ibv_send_wr *bad_tx_work_request;
   if (ibv_post_send(qp->get_qp(), iswr, &bad_tx_work_request)) {
     ldout(cct, 1) << __func__ << " failed to send data"
@@ -629,15 +632,16 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
 void RDMAConnectedSocketImpl::fin() {
   ibv_send_wr wr;
   memset(&wr, 0, sizeof(wr));
-  wr.wr_id = reinterpret_cast<uint64_t>(qp);
+  wr.wr_id = reinterpret_cast<uint64_t>(cmgr->qp);
   wr.num_sge = 0;
   wr.opcode = IBV_WR_SEND;
   wr.send_flags = IBV_SEND_SIGNALED;
   ibv_send_wr* bad_tx_work_request;
-  if (ibv_post_send(qp->get_qp(), &wr, &bad_tx_work_request)) {
+  int err = ibv_post_send(cmgr->qp->get_qp(), &wr, &bad_tx_work_request);
+  if (err) {
     ldout(cct, 1) << __func__ << " failed to send message="
                   << " ibv_post_send failed(most probably should be peer not ready): "
-                  << cpp_strerror(errno) << dendl;
+                  << cpp_strerror(err) << dendl;
     worker->perf_logger->inc(l_msgr_rdma_tx_failed);
     return ;
   }

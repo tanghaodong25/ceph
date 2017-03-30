@@ -39,6 +39,10 @@ class RDMAConnMgr {
   RDMADispatcher* dispatcher;
   RDMAWorker* worker;
 
+  Device *ibdev = nullptr;
+  int ibport = -1;
+  QueuePair *qp = nullptr;
+
   bool is_server;
   bool active;// qp is active ?
   int connected;
@@ -54,9 +58,11 @@ class RDMAConnMgr {
   virtual int try_connect(const entity_addr_t&, const SocketOptions &opt) = 0;
   virtual int activate();
 
+  int create_queue_pair();
+
   void post_read();
 
-  void shutdown();
+  virtual void shutdown();
   void close();
 };
 inline ostream& operator<<(ostream& out, const RDMAConnMgr &m)
@@ -72,9 +78,6 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   Infiniband* infiniband;
   RDMADispatcher* dispatcher;
   RDMAWorker* worker;
-  Device *ibdev = nullptr;
-  int ibport = -1;
-  QueuePair *qp = nullptr;
 
  public:
   typedef Infiniband::MemoryManager::Chunk Chunk;
@@ -83,7 +86,6 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
 
  private:
   RDMAConnMgr *cmgr;
-  int error;
   std::vector<Chunk*> buffers;
   int notify_fd = -1;
   bufferlist pending_bl;
@@ -95,6 +97,7 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   int post_work_request(std::vector<Chunk*>&);
 
  public:
+  int error;
   uint32_t local_qpn = 0;
   uint32_t remote_qpn = 0;
 
@@ -106,8 +109,7 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
     return out << "socket {lqpn: " << local_qpn << " rqpn: " << remote_qpn << " " << *cmgr << "}";
   };
 
-  Device *get_device() { return ibdev; };
-  int get_ibport() { return ibport; };
+  Device *get_device() { return cmgr->ibdev; };
 
   void pass_wc(std::vector<ibv_wc> &&v);
   void get_wc(std::vector<ibv_wc> &w);
@@ -120,14 +122,12 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   virtual void close() override { cmgr->close(); };
   virtual int fd() const override { return notify_fd; }
   void fault();
-  const char* get_qp_state() { return Infiniband::qp_state_string(qp->get_state()); }
-  QueuePair *get_qp() { return qp; };
   ssize_t submit(bool more);
   void fin();
+  int get_gid_idx();
   void register_qp(QueuePair *qp);
   void notify();
 
-  QueuePair *create_queue_pair(Device *d, int p);
   int try_connect(const entity_addr_t &sa, const SocketOptions &opt) { return cmgr->try_connect(sa, opt); };
 };
 inline ostream& operator<<(ostream& out, const RDMAConnectedSocketImpl &s)

@@ -312,7 +312,6 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
       RDMAConnectedSocketImpl *conn = get_conn_lockless(response->qp_num);
 
       if (conn && conn->is_connected()) {
-        ldout(cct, 25) << __func__ << " qp state is : " << conn->get_qp_state() << dendl;//wangzhi
         conn->fault();
       } else {
         ldout(cct, 1) << __func__ << " missing qp_num=" << response->qp_num << " discard event" << dendl;
