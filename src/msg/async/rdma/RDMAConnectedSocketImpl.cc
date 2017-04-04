@@ -48,7 +48,10 @@ RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* i
   : cct(cct), infiniband(ib), dispatcher(s), worker(w),
     lock("RDMAConnectedSocketImpl::lock"), error(0)
 {
-    cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
+  notify_fd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
+  assert(notify_fd >= 0);
+
+  cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
 }
 
 int RDMAConnMgr::create_queue_pair()
@@ -96,7 +99,7 @@ RDMAConnTCP::RDMAConnTCP(CephContext *cct, RDMAConnectedSocketImpl *sock,
 
 void RDMAConnectedSocketImpl::register_qp(QueuePair *qp)
 {
-  notify_fd = dispatcher->register_qp(qp, this);
+  dispatcher->register_qp(qp, this);
   dispatcher->perf_logger->inc(l_msgr_rdma_created_queue_pair);
   dispatcher->perf_logger->inc(l_msgr_rdma_active_queue_pair);
 }
