@@ -99,6 +99,8 @@ class Device {
 
   const char* get_name() const { return name;}
 
+  friend inline ostream& operator<<(ostream& out, const Device &d);
+
   Port *get_port(int ibport);
   uint16_t get_lid(int p) { return get_port(p)->get_lid(); }
   ibv_gid get_gid(int p) { return get_port(p)->get_gid(); }
@@ -135,7 +137,13 @@ class Device {
 
 inline ostream& operator<<(ostream& out, const Device &d)
 {
-    return out << d.get_name();
+    out << d.get_name();
+    if (d.initialized)
+      out << " [I]";
+    else
+      out << " [!I]";
+
+    return out;
 }
 
 

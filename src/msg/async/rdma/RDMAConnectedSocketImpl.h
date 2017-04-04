@@ -106,7 +106,14 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   virtual ~RDMAConnectedSocketImpl();
 
   ostream &print(ostream &out) const {
-    return out << "socket {lqpn: " << local_qpn << " rqpn: " << remote_qpn << " " << *cmgr << "}";
+    out << "socket {lqpn: " << local_qpn << " rqpn: " << remote_qpn << " ";
+    if (cmgr)
+      out << *cmgr;
+    else
+      out << "cmgr=NULL";
+    out << "}";
+
+    return out;
   };
 
   Device *get_device() { return cmgr->ibdev; };
