@@ -62,7 +62,8 @@ int Infiniband::QueuePair::init()
   memset(&qpia, 0, sizeof(qpia));
   qpia.send_cq = txcq->get_cq();
   qpia.recv_cq = rxcq->get_cq();
-  qpia.srq = srq;                      // use the same shared receive queue
+  if (srq != nullptr)
+    qpia.srq = srq;                      // use the same shared receive queue
   qpia.cap.max_send_wr  = max_send_wr; // max outstanding send requests
   qpia.cap.max_send_sge = 1;           // max send scatter-gather elements
   qpia.cap.max_inline_data = MAX_INLINE_DATA;          // max bytes of immediate data on send q

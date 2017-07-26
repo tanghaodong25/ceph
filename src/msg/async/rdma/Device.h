@@ -76,6 +76,7 @@ class Device {
                 // index 1). Index 0 is not used
 
   int port_cnt;
+  bool support_srq = true;
 
   uint32_t max_send_wr;
   uint32_t max_recv_wr;
@@ -92,7 +93,7 @@ class Device {
   explicit Device(CephContext *c, Infiniband *ib, struct ibv_context *ctxt);
   ~Device();
 
-  void init(int ibport = -1);
+  void init(int ibport = -1, RDMAConnMgr* conn_mgr = nullptr);
   void uninit();
 
   void handle_async_event();

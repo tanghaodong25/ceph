@@ -202,9 +202,8 @@ int RDMAConnCM::alloc_resources()
 
   ldout(cct, 1) << __func__ << " Device: " << *ibdev << " port: " << ibport << dendl;
 
-  ibdev->init(ibport);
+  ibdev->init(ibport, this);
 
-  create_queue_pair();
   socket->register_qp(qp);
 
   return 0;

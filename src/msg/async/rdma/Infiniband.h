@@ -265,7 +265,7 @@ class Infiniband {
     ibv_context* ctxt;           // device context of the HCA to use
     int ib_physical_port;
     ibv_pd*      pd;             // protection domain
-    ibv_srq*     srq;            // shared receive queue
+    ibv_srq*     srq = nullptr;            // shared receive queue
     ibv_qp*      qp;             // infiniband verbs QP handle
     Infiniband::CompletionQueue* txcq;
     Infiniband::CompletionQueue* rxcq;

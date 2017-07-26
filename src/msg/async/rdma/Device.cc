@@ -132,6 +132,14 @@ Device::Device(CephContext *cct, Infiniband *ib, struct ibv_context *ctxt)
   port_cnt = device_attr->phys_port_cnt;
   ports = new Port *[port_cnt + 1];
   assert(ports);
+  
+  if (!cct->_conf->ms_async_rdma_support_srq) {
+    support_srq = false;
+  } else {
+    if (device_attr->max_srq == 0) {
+      support_srq = false; 
+    } 
+  }
 
   for (int i = 1; i <= port_cnt; i++) {
     ports[i] = new Port(cct, ctxt, i);
@@ -147,42 +155,48 @@ Device::Device(CephContext *cct, Infiniband *ib, struct ibv_context *ctxt)
   assert(NetHandler(cct).set_nonblock(ctxt->async_fd) == 0);
 }
 
-void Device::init(int ibport)
+void Device::init(int ibport, RDMAConnMgr* conn_mgr)
 {
   Mutex::Locker l(lock);
 
   verify_port(ibport);
 
-  if (initialized)
-    return;
+  if (!initialized) {
+    pd = new ProtectionDomain(cct, this);
 
-  pd = new ProtectionDomain(cct, this);
+    max_recv_wr = std::min(device_attr->max_srq_wr, (int)cct->_conf->ms_async_rdma_receive_buffers);
+    ldout(cct, 1) << __func__ << " assigning: " << max_recv_wr << " receive buffers" << dendl;
 
-  max_recv_wr = std::min(device_attr->max_srq_wr, (int)cct->_conf->ms_async_rdma_receive_buffers);
-  ldout(cct, 1) << __func__ << " assigning: " << max_recv_wr << " receive buffers" << dendl;
+    max_send_wr = std::min(device_attr->max_qp_wr, (int)cct->_conf->ms_async_rdma_send_buffers);
+    ldout(cct, 1) << __func__ << " assigning: " << max_send_wr << " send buffers"  << dendl;
 
-  max_send_wr = std::min(device_attr->max_qp_wr, (int)cct->_conf->ms_async_rdma_send_buffers);
-  ldout(cct, 1) << __func__ << " assigning: " << max_send_wr << " send buffers"  << dendl;
+    ldout(cct, 1) << __func__ << " device allow " << device_attr->max_cqe
+		  << " completion entries" << dendl;
 
-  ldout(cct, 1) << __func__ << " device allow " << device_attr->max_cqe
-                << " completion entries" << dendl;
+    memory_manager = new MemoryManager(this, pd,
+				       cct->_conf->ms_async_rdma_enable_hugepage);
+    memory_manager->register_rx_tx(
+	cct->_conf->ms_async_rdma_buffer_size, max_recv_wr, max_send_wr);
+    
+    srq = create_shared_receive_queue(max_recv_wr, MAX_SHARED_RX_SGE_COUNT);
+    tx_cq = create_comp_queue(cct, tx_cc);
+    assert(tx_cq);
 
-  memory_manager = new MemoryManager(this, pd,
-                                     cct->_conf->ms_async_rdma_enable_hugepage);
-  memory_manager->register_rx_tx(
-      cct->_conf->ms_async_rdma_buffer_size, max_recv_wr, max_send_wr);
-
-  srq = create_shared_receive_queue(max_recv_wr, MAX_SHARED_RX_SGE_COUNT);
-  post_channel_cluster();
-
-  tx_cq = create_comp_queue(cct, tx_cc);
-  assert(tx_cq);
-
-  rx_cq = create_comp_queue(cct, rx_cc);
-  assert(rx_cq);
+    rx_cq = create_comp_queue(cct, rx_cc);
+    assert(rx_cq);
+  }
+  
+  conn_mgr->create_queue_pair();
+  
+  if (support_srq) {
+    if (!initialized) {
+      post_channel_cluster();
+    }
+  } else {
+    post_channel_cluster(); 
+  }
 
   initialized = true;
-
   ldout(cct, 5) << __func__ << ":" << __LINE__ << " device " << *this << " is initialized" << dendl;
 }
 
