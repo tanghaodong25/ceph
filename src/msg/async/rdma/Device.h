@@ -92,7 +92,7 @@ class Device {
   explicit Device(CephContext *c, Infiniband *ib, struct ibv_context *ctxt);
   ~Device();
 
-  void init(int ibport = -1);
+  void init(int ibport = -1, RDMAConnMgr* conn_mgr = nullptr);
   void uninit();
 
   void handle_async_event();
@@ -112,8 +112,8 @@ class Device {
   ibv_srq* create_shared_receive_queue(uint32_t max_wr, uint32_t max_sge);
   CompletionChannel *create_comp_channel(CephContext *c);
   CompletionQueue *create_comp_queue(CephContext *c, CompletionChannel *cc=NULL);
-  int post_chunk(Chunk* chunk);
-  int post_channel_cluster();
+  int post_chunk(Chunk* chunk, RDMAConnMgr* conn_mgr);
+  int post_channel_cluster(RDMAConnMgr* conn_mgr);
 
   MemoryManager* get_memory_manager() { return memory_manager; }
   bool is_tx_buffer(const char* c) { return memory_manager->is_tx_buffer(c);}
@@ -134,6 +134,7 @@ class Device {
   Infiniband::CompletionQueue *tx_cq = nullptr;
   Infiniband::CompletionChannel *tx_cc = nullptr;
   ProtectionDomain *pd = nullptr;
+  bool support_srq = true;
 };
 
 inline ostream& operator<<(ostream& out, const Device &d)

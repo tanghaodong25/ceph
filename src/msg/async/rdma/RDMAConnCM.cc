@@ -202,9 +202,8 @@ int RDMAConnCM::alloc_resources()
 
   ldout(cct, 1) << __func__ << " Device: " << *ibdev << " port: " << ibport << dendl;
 
-  ibdev->init(ibport);
+  ibdev->init(ibport, this);
 
-  create_queue_pair();
   socket->register_qp(qp);
 
   return 0;
@@ -373,7 +372,7 @@ int RDMAServerConnCM::accept(ConnectedSocket *sock, const SocketOptions &opt, en
 
   memset(&conn_param, 0, sizeof(conn_param));
   conn_param.qp_num = socket->local_qpn;
-  conn_param.srq = 1;
+  //conn_param.srq = 1;
 
   ret = rdma_accept(new_id, &conn_param);
   assert(!ret);

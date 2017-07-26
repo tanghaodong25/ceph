@@ -123,11 +123,11 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
   error = ECONNRESET;
   int ret = 0;
   for (unsigned i=0; i < wc.size(); ++i) {
-    ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
+    ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id), cmgr);
     assert(ret == 0);
   }
   for (unsigned i=0; i < buffers.size(); ++i) {
-    ret = cmgr->ibdev->post_chunk(buffers[i]);
+    ret = cmgr->ibdev->post_chunk(buffers[i], cmgr);
     assert(ret == 0);
   }
 
@@ -365,6 +365,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
     assert(response->status == IBV_WC_SUCCESS);
     Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
     ldout(cct, 25) << __func__ << " chunk length: " << response->byte_len << " bytes." << chunk << dendl;
+    ldout(cct, 0) << __func__ << " qp=" << cmgr->get_qp()->get_qp() << " read chunk=" << chunk << dendl;
     chunk->prepare_read(response->byte_len);
     worker->perf_logger->inc(l_msgr_rdma_rx_bytes, response->byte_len);
     if (response->byte_len == 0) {
@@ -373,7 +374,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
         error = ECONNRESET;
         ldout(cct, 1) << __func__ << " got remote close msg..." << dendl;
       }
-      assert(ibdev->post_chunk(chunk) == 0);
+      assert(ibdev->post_chunk(chunk, cmgr) == 0);
     } else {
       if (read == (ssize_t)len) {
         buffers.push_back(chunk);
@@ -384,7 +385,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
         ldout(cct, 25) << __func__ << " buffers add a chunk: " << chunk->get_offset() << ":" << chunk->get_bound() << dendl;
       } else {
         read += chunk->read(buf+read, response->byte_len);
-        assert(ibdev->post_chunk(chunk) == 0);
+        assert(ibdev->post_chunk(chunk, cmgr) == 0);
       }
     }
   }
@@ -406,9 +407,9 @@ ssize_t RDMAConnectedSocketImpl::read_buffers(char* buf, size_t len)
   for (; c != buffers.end() ; ++c) {
     tmp = (*c)->read(buf+read, len-read);
     read += tmp;
-    ldout(cct, 25) << __func__ << " this iter read: " << tmp << " bytes." << " offset: " << (*c)->get_offset() << " ,bound: " << (*c)->get_bound()  << ". Chunk:" << *c  << dendl;
+    ldout(cct, 0) << __func__ << " this iter read: " << tmp << " bytes." << " offset: " << (*c)->get_offset() << " ,bound: " << (*c)->get_bound()  << ". Chunk:" << *c  << dendl;
     if ((*c)->over()) {
-      assert(ibdev->post_chunk(*c) == 0);
+      assert(ibdev->post_chunk(*c, cmgr) == 0);
       ldout(cct, 25) << __func__ << " one chunk over." << dendl;
     }
     if (read == len) {
@@ -648,7 +649,7 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
 
 void RDMAConnectedSocketImpl::fin()
 {
-  ldout(cct, 1) << __func__ << " sending FIN " << *this << dendl;
+  ldout(cct, 0) << __func__ << " sending FIN " << *this << dendl;
 
   ibv_send_wr wr;
   memset(&wr, 0, sizeof(wr));

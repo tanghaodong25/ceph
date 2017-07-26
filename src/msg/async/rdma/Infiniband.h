@@ -128,6 +128,7 @@ class Infiniband {
     void free_huge_pages(void *ptr);
     void register_rx_tx(uint32_t size, uint32_t rx_num, uint32_t tx_num);
     void return_tx(std::vector<Chunk*> &chunks);
+    void return_rx(std::vector<Chunk*> &chunks);
     int get_send_buffers(std::vector<Chunk*> &c, size_t bytes);
     int get_channel_buffers(std::vector<Chunk*> &chunks, size_t bytes);
     bool is_tx_buffer(const char* c) { return send->is_my_buffer(c); }
@@ -265,7 +266,7 @@ class Infiniband {
     ibv_context* ctxt;           // device context of the HCA to use
     int ib_physical_port;
     ibv_pd*      pd;             // protection domain
-    ibv_srq*     srq;            // shared receive queue
+    ibv_srq*     srq = nullptr;            // shared receive queue
     ibv_qp*      qp;             // infiniband verbs QP handle
     Infiniband::CompletionQueue* txcq;
     Infiniband::CompletionQueue* rxcq;

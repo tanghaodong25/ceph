@@ -150,14 +150,19 @@ void RDMADispatcher::polling()
         ldout(cct, 25) << __func__ << " got chunk=" << chunk << " bytes:" << response->byte_len << " opcode:" << response->opcode << dendl;
 
         assert(wc[i].opcode == IBV_WC_RECV);
-
         if (response->status == IBV_WC_SUCCESS) {
           conn = get_conn_lockless(response->qp_num);
           if (!conn) {
             assert(ibdev->is_rx_buffer(chunk->buffer));
-            r = ibdev->post_chunk(chunk);
-            ldout(cct, 1) << __func__ << " csi with qpn " << response->qp_num << " may be dead. chunk " << chunk << " will be back ? " << r << dendl;
-            assert(r == 0);
+            if (!ibdev->support_srq) {
+              r = ibdev->post_chunk(chunk, nullptr);
+              assert(r == 0);
+            } else {
+              std::vector<Chunk*> rx_chunks;
+              rx_chunks.push_back(chunk);
+              ibdev->get_memory_manager()->return_rx(rx_chunks);
+            }
+            ldout(cct, 0) << __func__ << " csi with qpn " << response->qp_num << " may be dead. chunk " << chunk << " will be back ? " << r << dendl;
           } else {
             polled[conn].push_back(*response);
           }
@@ -167,7 +172,7 @@ void RDMADispatcher::polling()
               << ") status(" << response->status << ":"
               << Infiniband::wc_status_to_string(response->status) << ")" << dendl;
           assert(ibdev->is_rx_buffer(chunk->buffer));
-          r = ibdev->post_chunk(chunk);
+          r = ibdev->post_chunk(chunk, conn->get_cmgr());
           if (r) {
             ldout(cct, 0) << __func__ << " post chunk failed, error: " << cpp_strerror(r) << dendl;
             assert(r == 0);
@@ -208,14 +213,14 @@ void RDMADispatcher::polling()
         if (!rearmed) {
           // Clean up cq events after rearm notify ensure no new incoming event
           // arrived between polling and rearm
-	  global_infiniband->rearm_notify();
+          global_infiniband->rearm_notify();
           rearmed = true;
           continue;
         }
 
         perf_logger->set(l_msgr_rdma_polling, 0);
 
-	r = global_infiniband->poll_blocking(done);
+        r = global_infiniband->poll_blocking(done);
         if (r > 0)
           ldout(cct, 20) << __func__ << " got a cq event." << dendl;
 
@@ -287,7 +292,7 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
   for (int i = 0; i < n; ++i) {
     ibv_wc* response = &cqe[i];
     Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
-    ldout(cct, 25) << __func__ << " QP: " << response->qp_num
+    ldout(cct, 10) << __func__ << " QP: " << response->qp_num
                    << " len: " << response->byte_len << " , addr:" << chunk
                    << " " << global_infiniband->wc_status_to_string(response->status) << dendl;
 
@@ -346,7 +351,7 @@ void RDMADispatcher::post_tx_buffer(Device *ibdev, std::vector<Chunk*> &chunks)
 
   inflight -= chunks.size();
   ibdev->get_memory_manager()->return_tx(chunks);
-  ldout(cct, 30) << __func__ << " release " << chunks.size()
+  ldout(cct, 20) << __func__ << " release " << chunks.size()
                  << " chunks, inflight " << inflight << dendl;
   notify_pending_workers();
 }

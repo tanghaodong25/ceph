@@ -44,7 +44,6 @@ class RDMAConnMgr {
 
   Device *ibdev = nullptr;
   int ibport = -1;
-  QueuePair *qp = nullptr;
 
   bool is_server;
   bool active;// qp is active ?
@@ -56,6 +55,8 @@ class RDMAConnMgr {
   virtual ~RDMAConnMgr() { };
 
   virtual void put();
+
+  QueuePair* get_qp() { return qp; }
 
   virtual ostream &print(ostream &out) const = 0;
 
@@ -75,6 +76,7 @@ class RDMAConnMgr {
   void close();
 
   virtual void set_orphan() { socket = nullptr; put(); };
+  QueuePair *qp = nullptr;
 };
 inline ostream& operator<<(ostream& out, const RDMAConnMgr &m)
 {
@@ -115,7 +117,8 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   RDMAConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
                           RDMAWorker *w, void *info = nullptr);
   virtual ~RDMAConnectedSocketImpl();
-
+  
+  RDMAConnMgr* get_cmgr() { return cmgr; }
   ostream &print(ostream &out) const {
     out << "socket {lqpn: " << local_qpn << " rqpn: " << remote_qpn << " ";
     if (cmgr)

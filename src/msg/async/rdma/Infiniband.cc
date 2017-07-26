@@ -62,12 +62,15 @@ int Infiniband::QueuePair::init()
   memset(&qpia, 0, sizeof(qpia));
   qpia.send_cq = txcq->get_cq();
   qpia.recv_cq = rxcq->get_cq();
-  qpia.srq = srq;                      // use the same shared receive queue
+  if (srq != nullptr)
+    qpia.srq = srq;                      // use the same shared receive queue
   qpia.cap.max_send_wr  = max_send_wr; // max outstanding send requests
+  qpia.cap.max_recv_wr  = max_recv_wr; // max outstanding send requests
   qpia.cap.max_send_sge = 1;           // max send scatter-gather elements
-  qpia.cap.max_inline_data = MAX_INLINE_DATA;          // max bytes of immediate data on send q
+  qpia.cap.max_recv_sge = 1;           // max send scatter-gather elements
+  //qpia.cap.max_inline_data = MAX_INLINE_DATA;          // max bytes of immediate data on send q
   qpia.qp_type = type;                 // RC, UC, UD, or XRC
-  qpia.sq_sig_all = 0;                 // only generate CQEs on requested WQEs
+  //qpia.sq_sig_all = 0;                 // only generate CQEs on requested WQEs
 
   qp = cmgr->qp_create(pd, &qpia);
 
@@ -83,7 +86,9 @@ int Infiniband::QueuePair::init()
 
   ldout(cct, 20) << __func__ << " successfully create queue pair: "
                  << "qp=" << qp << dendl;
-
+  
+  if (cct->_conf->ms_async_rdma_cm)
+    return 0;
   // move from RESET to INIT state
   ibv_qp_attr qpa;
   memset(&qpa, 0, sizeof(qpa));
@@ -92,6 +97,7 @@ int Infiniband::QueuePair::init()
   qpa.port_num   = (uint8_t)(ib_physical_port);
   qpa.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
   qpa.qkey       = q_key;
+  qpa.alt_timeout = 10;
 
   int mask = IBV_QP_STATE | IBV_QP_PORT;
   switch (type) {
@@ -474,7 +480,7 @@ int Infiniband::MemoryManager::Cluster::fill(uint32_t num)
   free_chunks.reserve(num);
   Chunk* chunk = chunk_base;
   for (uint32_t offset = 0; offset < bytes; offset += buffer_size){
-    ibv_mr* m = ibv_reg_mr(manager.pd->pd, base+offset, buffer_size, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
+    ibv_mr* m = ibv_reg_mr(manager.pd->pd, base+offset, buffer_size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     assert(m);
     new(chunk) Chunk(m, buffer_size, base+offset);
     free_chunks.push_back(chunk);
@@ -573,6 +579,11 @@ void Infiniband::MemoryManager::register_rx_tx(uint32_t size, uint32_t rx_num, u
 void Infiniband::MemoryManager::return_tx(std::vector<Chunk*> &chunks)
 {
   send->take_back(chunks);
+}
+
+void Infiniband::MemoryManager::return_rx(std::vector<Chunk*> &chunks)
+{
+  channel->take_back(chunks);  
 }
 
 int Infiniband::MemoryManager::get_send_buffers(std::vector<Chunk*> &c, size_t bytes)
