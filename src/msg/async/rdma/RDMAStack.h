@@ -129,6 +129,8 @@ class RDMADispatcher {
   void post_tx_buffer(Device *ibdev, std::vector<Chunk*> &chunks);
 
   std::atomic<uint64_t> inflight = {0};
+
+  void reap_conn();
 };
 
 

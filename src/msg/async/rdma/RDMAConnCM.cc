@@ -42,7 +42,7 @@ RDMAConnCM::RDMAConnCM(CephContext *cct, RDMAConnectedSocketImpl *sock,
 
   channel = rdma_create_event_channel();
   assert(channel);
-
+	
   worker->center.submit_to(worker->center.get_id(), [this]() {
 			   worker->center.create_file_event(channel->fd, EVENT_READABLE, con_handler);
 			   }, false);
@@ -78,7 +78,7 @@ RDMAConnCM::RDMAConnCM(CephContext *cct, RDMAConnectedSocketImpl *sock,
 RDMAConnCM::~RDMAConnCM()
 {
   ldout(cct, 1) << __func__ << " called" << dendl;
-
+  
   rdma_destroy_id(id);
   rdma_destroy_event_channel(channel);
 }
@@ -138,7 +138,17 @@ void RDMAConnCM::handle_cm_event()
     break;
 
   case RDMA_CM_EVENT_ROUTE_RESOLVED:
-    err = rdma_connect(id, NULL);
+    struct rdma_conn_param conn_param;
+
+    memset(&conn_param, 0, sizeof(conn_param));
+    conn_param.qp_num = socket->local_qpn;
+    conn_param.srq = 1;
+    conn_param.initiator_depth = 128;
+    conn_param.responder_resources = 128;
+    conn_param.retry_count = 7;
+    conn_param.rnr_retry_count = 7;
+
+    err = rdma_connect(id, &conn_param);
     assert(!err);
     break;
 
@@ -201,10 +211,9 @@ int RDMAConnCM::alloc_resources()
   ibport = id->port_num;
 
   ldout(cct, 1) << __func__ << " Device: " << *ibdev << " port: " << ibport << dendl;
+	
+  ibdev->init(ibport, this);
 
-  ibdev->init(ibport);
-
-  create_queue_pair();
   socket->register_qp(qp);
 
   return 0;
@@ -235,10 +244,13 @@ void RDMAConnCM::cm_established(uint32_t qpn)
 void RDMAConnCM::shutdown()
 {
   ldout(cct, 1) << __func__ << dendl;
-  if (socket->error)
+  if (socket->error) {
+    ldout(cct, 20) << __func__ << " rdma disconnect" << dendl;
     rdma_disconnect(id);
+  }
 
   RDMAConnMgr::shutdown();
+
 }
 
 void RDMAConnCM::cleanup()
@@ -290,13 +302,13 @@ RDMAServerConnCM::RDMAServerConnCM(CephContext *cct, Infiniband *ib, RDMADispatc
 
   channel = rdma_create_event_channel();
   assert(channel);
-
   err = rdma_create_id(channel, &listen_id, this, RDMA_PS_TCP);
   assert(!err);
 }
 
 RDMAServerConnCM::~RDMAServerConnCM()
 {
+  ldout(cct, 1) << __func__ << " called" << dendl;
   rdma_destroy_id(listen_id);
   rdma_destroy_event_channel(channel);
 }
@@ -374,6 +386,10 @@ int RDMAServerConnCM::accept(ConnectedSocket *sock, const SocketOptions &opt, en
   memset(&conn_param, 0, sizeof(conn_param));
   conn_param.qp_num = socket->local_qpn;
   conn_param.srq = 1;
+  conn_param.initiator_depth = 128;
+  conn_param.responder_resources = 128;
+  conn_param.retry_count = 7;
+  conn_param.rnr_retry_count = 7;
 
   ret = rdma_accept(new_id, &conn_param);
   assert(!ret);
@@ -392,8 +408,9 @@ int RDMAServerConnCM::accept(ConnectedSocket *sock, const SocketOptions &opt, en
 
 void RDMAServerConnCM::abort_accept()
 {
-  rdma_destroy_id(listen_id);
-  rdma_destroy_event_channel(channel);
+  ldout(cct, 1) << __func__ << " called" << dendl;
+  //rdma_destroy_id(listen_id);
+  //rdma_destroy_event_channel(channel);
 }
 
 int RDMAServerConnCM::fd() const

@@ -40,6 +40,8 @@ RDMADispatcher::~RDMADispatcher()
 
   assert(qp_conns.empty());
   assert(num_qp_conn == 0);
+
+  reap_conn();
   assert(dead_queue_pairs.empty());
   assert(num_dead_queue_pair == 0);
 }
@@ -117,7 +119,7 @@ void RDMADispatcher::process_async_event(Device *ibdev, ibv_async_event &async_e
 
 void RDMADispatcher::polling()
 {
-  static int MAX_COMPLETIONS = 32;
+  static int MAX_COMPLETIONS = 128;
   ibv_wc wc[MAX_COMPLETIONS];
 
   std::map<RDMAConnectedSocketImpl*, std::vector<ibv_wc> > polled;
@@ -126,7 +128,6 @@ void RDMADispatcher::polling()
   utime_t last_inactive = ceph_clock_now();
   bool rearmed = false;
   int r = 0;
-
   while (true) {
     Device *ibdev;
 
@@ -155,9 +156,11 @@ void RDMADispatcher::polling()
           conn = get_conn_lockless(response->qp_num);
           if (!conn) {
             assert(ibdev->is_rx_buffer(chunk->buffer));
-            r = ibdev->post_chunk(chunk);
-            ldout(cct, 1) << __func__ << " csi with qpn " << response->qp_num << " may be dead. chunk " << chunk << " will be back ? " << r << dendl;
-            assert(r == 0);
+            if (ibdev->support_srq) {
+              r = ibdev->post_chunk(chunk);
+              assert(r == 0);
+              ldout(cct, 1) << __func__ << " csi with qpn " << response->qp_num << " may be dead. chunk " << chunk << " will be back ? " << r << dendl;
+	    }
           } else {
             polled[conn].push_back(*response);
           }
@@ -167,21 +170,28 @@ void RDMADispatcher::polling()
               << ") status(" << response->status << ":"
               << Infiniband::wc_status_to_string(response->status) << ")" << dendl;
           assert(ibdev->is_rx_buffer(chunk->buffer));
-          r = ibdev->post_chunk(chunk);
-          if (r) {
+          if (ibdev->support_srq) {
+            r = ibdev->post_chunk(chunk);
+          }
+
+          if (ibdev->support_srq && r) {
             ldout(cct, 0) << __func__ << " post chunk failed, error: " << cpp_strerror(r) << dendl;
             assert(r == 0);
           }
-
           conn = get_conn_lockless(response->qp_num);
-          if (conn && conn->is_connected())
+          if (conn && conn->is_connected()) {
             conn->fault();
+          }
         }
       }
 
       for (auto &&i : polled)
         i.first->pass_wc(std::move(i.second));
       polled.clear();
+    }
+		
+    if (tx_ret < 0 || rx_ret < 0) {
+      ldout(cct, 10) << __func__ << " polling cq failed, tx_ret: "	<< tx_ret <<  " rx_ret: " << rx_ret << dendl;
     }
 
     if (!tx_ret && !rx_ret) {
@@ -208,14 +218,14 @@ void RDMADispatcher::polling()
         if (!rearmed) {
           // Clean up cq events after rearm notify ensure no new incoming event
           // arrived between polling and rearm
-	  global_infiniband->rearm_notify();
+          global_infiniband->rearm_notify();
           rearmed = true;
           continue;
         }
 
         perf_logger->set(l_msgr_rdma_polling, 0);
 
-	r = global_infiniband->poll_blocking(done);
+        r = global_infiniband->poll_blocking(done);
         if (r > 0)
           ldout(cct, 20) << __func__ << " got a cq event." << dendl;
 
@@ -342,15 +352,25 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
 void RDMADispatcher::post_tx_buffer(Device *ibdev, std::vector<Chunk*> &chunks)
 {
   if (chunks.empty())
-    return ;
+    return;
 
   inflight -= chunks.size();
   ibdev->get_memory_manager()->return_tx(chunks);
-  ldout(cct, 30) << __func__ << " release " << chunks.size()
-                 << " chunks, inflight " << inflight << dendl;
+  ldout(cct, 30) << __func__ << " release " << chunks.size() << " chunks, inflight " << inflight << dendl;
   notify_pending_workers();
 }
 
+void RDMADispatcher::reap_conn() {
+  if (num_dead_queue_pair) {
+    Mutex::Locker l(lock);
+    while (!dead_queue_pairs.empty()) {
+      delete dead_queue_pairs.back();
+      perf_logger->dec(l_msgr_rdma_active_queue_pair);
+      dead_queue_pairs.pop_back();
+      --num_dead_queue_pair;
+    }
+  }
+}
 
 RDMAWorker::RDMAWorker(CephContext *c, unsigned i)
   : Worker(c, i), stack(nullptr),

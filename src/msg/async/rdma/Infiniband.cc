@@ -62,9 +62,12 @@ int Infiniband::QueuePair::init()
   memset(&qpia, 0, sizeof(qpia));
   qpia.send_cq = txcq->get_cq();
   qpia.recv_cq = rxcq->get_cq();
-  qpia.srq = srq;                      // use the same shared receive queue
+  if (srq != nullptr)
+    qpia.srq = srq;                      // use the same shared receive queue
   qpia.cap.max_send_wr  = max_send_wr; // max outstanding send requests
+  qpia.cap.max_recv_wr  = max_recv_wr; // max outstanding recv requests
   qpia.cap.max_send_sge = 1;           // max send scatter-gather elements
+  qpia.cap.max_recv_sge = 1;           // max recv scatter-gather elements
   qpia.cap.max_inline_data = MAX_INLINE_DATA;          // max bytes of immediate data on send q
   qpia.qp_type = type;                 // RC, UC, UD, or XRC
   qpia.sq_sig_all = 0;                 // only generate CQEs on requested WQEs
@@ -438,8 +441,8 @@ void Infiniband::MemoryManager::Chunk::clear()
   bound = 0;
 }
 
-Infiniband::MemoryManager::Cluster::Cluster(MemoryManager& m, uint32_t s)
-  : manager(m), buffer_size(s), lock("cluster_lock")
+Infiniband::MemoryManager::Cluster::Cluster(MemoryManager& m, uint32_t s, CephContext* c)
+  : manager(m), buffer_size(s), lock("cluster_lock"), cct(c)
 {
 }
 
@@ -461,7 +464,7 @@ int Infiniband::MemoryManager::Cluster::fill(uint32_t num)
 {
   assert(!base);
   num_chunk = num;
-  uint32_t bytes = buffer_size * num;
+  uint64_t bytes = buffer_size * num;
   if (manager.enabled_huge_page) {
     base = (char*)manager.malloc_huge_pages(bytes);
   } else {
@@ -473,7 +476,7 @@ int Infiniband::MemoryManager::Cluster::fill(uint32_t num)
   memset(chunk_base, 0, sizeof(Chunk) * num);
   free_chunks.reserve(num);
   Chunk* chunk = chunk_base;
-  for (uint32_t offset = 0; offset < bytes; offset += buffer_size){
+  for (uint64_t offset = 0; offset < bytes; offset += buffer_size){
     ibv_mr* m = ibv_reg_mr(manager.pd->pd, base+offset, buffer_size, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
     assert(m);
     new(chunk) Chunk(m, buffer_size, base+offset);
@@ -520,8 +523,8 @@ int Infiniband::MemoryManager::Cluster::get_buffers(std::vector<Chunk*> &chunks,
 }
 
 
-Infiniband::MemoryManager::MemoryManager(Device *d, ProtectionDomain *p, bool hugepage)
-  : device(d), pd(p)
+Infiniband::MemoryManager::MemoryManager(Device *d, ProtectionDomain *p, bool hugepage, CephContext* c)
+  : device(d), pd(p), cct(c)
 {
   enabled_huge_page = hugepage;
 }
@@ -563,16 +566,21 @@ void Infiniband::MemoryManager::register_rx_tx(uint32_t size, uint32_t rx_num, u
 {
   assert(device);
   assert(pd);
-  channel = new Cluster(*this, size);
+  channel = new Cluster(*this, size, cct);
   channel->fill(rx_num);
 
-  send = new Cluster(*this, size);
+  send = new Cluster(*this, size, cct);
   send->fill(tx_num);
 }
 
 void Infiniband::MemoryManager::return_tx(std::vector<Chunk*> &chunks)
 {
   send->take_back(chunks);
+}
+
+void Infiniband::MemoryManager::return_rx(std::vector<Chunk*> &chunks)
+{
+  channel->take_back(chunks);	
 }
 
 int Infiniband::MemoryManager::get_send_buffers(std::vector<Chunk*> &c, size_t bytes)
@@ -583,6 +591,10 @@ int Infiniband::MemoryManager::get_send_buffers(std::vector<Chunk*> &c, size_t b
 int Infiniband::MemoryManager::get_channel_buffers(std::vector<Chunk*> &chunks, size_t bytes)
 {
   return channel->get_buffers(chunks, bytes);
+}
+
+int Infiniband::MemoryManager::free_buffer_size() {
+  return channel->free_chunks.size();
 }
 
 

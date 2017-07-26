@@ -23,6 +23,7 @@
 #include "msg/async/Stack.h"
 #include "Infiniband.h"
 #include "RDMAConnectedSocketImpl.h"
+#include "Device.h"
 
 #include <queue>
 
@@ -61,8 +62,7 @@ public:
   virtual void qp_destroy() override;
 
 private:
-  int create_channel();
-  void cm_established(uint32_t qpn);
+  int create_channel(); void cm_established(uint32_t qpn);
 
   struct rdma_cm_id *id;
 

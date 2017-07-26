@@ -96,7 +96,7 @@ class Infiniband {
 
     class Cluster {
      public:
-      Cluster(MemoryManager& m, uint32_t s);
+      Cluster(MemoryManager& m, uint32_t s, CephContext* c);
       ~Cluster();
 
       int fill(uint32_t num);
@@ -119,17 +119,20 @@ class Infiniband {
       char *base = nullptr;
       char *end = nullptr;
       Chunk* chunk_base = nullptr;
+      CephContext* cct;
     };
 
-    MemoryManager(Device *d, ProtectionDomain *p, bool hugepage);
+    MemoryManager(Device *d, ProtectionDomain *p, bool hugepage, CephContext* c);
     ~MemoryManager();
 
     void* malloc_huge_pages(size_t size);
     void free_huge_pages(void *ptr);
     void register_rx_tx(uint32_t size, uint32_t rx_num, uint32_t tx_num);
     void return_tx(std::vector<Chunk*> &chunks);
+    void return_rx(std::vector<Chunk*> &chunks);
     int get_send_buffers(std::vector<Chunk*> &c, size_t bytes);
     int get_channel_buffers(std::vector<Chunk*> &chunks, size_t bytes);
+    int free_buffer_size();
     bool is_tx_buffer(const char* c) { return send->is_my_buffer(c); }
     bool is_rx_buffer(const char* c) { return channel->is_my_buffer(c); }
     Chunk *get_tx_chunk_by_buffer(const char *c) {
@@ -146,6 +149,7 @@ class Infiniband {
     Cluster* send;// SEND
     Device *device;
     ProtectionDomain *pd;
+    CephContext* cct;
   };
 
  private:
@@ -265,7 +269,7 @@ class Infiniband {
     ibv_context* ctxt;           // device context of the HCA to use
     int ib_physical_port;
     ibv_pd*      pd;             // protection domain
-    ibv_srq*     srq;            // shared receive queue
+    ibv_srq*     srq = nullptr;            // shared receive queue
     ibv_qp*      qp;             // infiniband verbs QP handle
     Infiniband::CompletionQueue* txcq;
     Infiniband::CompletionQueue* rxcq;

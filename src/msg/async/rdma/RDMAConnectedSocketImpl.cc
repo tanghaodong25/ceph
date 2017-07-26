@@ -123,14 +123,22 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
   error = ECONNRESET;
   int ret = 0;
   for (unsigned i=0; i < wc.size(); ++i) {
-    ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
+    if (cmgr->ibdev->support_srq) {
+      ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
+    }
     assert(ret == 0);
   }
   for (unsigned i=0; i < buffers.size(); ++i) {
-    ret = cmgr->ibdev->post_chunk(buffers[i]);
+    if (cmgr->ibdev->support_srq) {
+      ret = cmgr->ibdev->post_chunk(reinterpret_cast<Chunk*>(wc[i].wr_id));
+    }
     assert(ret == 0);
   }
-
+  
+  if (reserved == 0)
+    cmgr->ibdev->get_memory_manager()->return_rx(reserved_chunks);
+  
+  cmgr->cleanup();
   cmgr->set_orphan();
   cmgr = nullptr;
 }
@@ -345,6 +353,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
   uint64_t i = 0;
   int r = ::read(notify_fd, &i, sizeof(i));
   ldout(cct, 20) << __func__ << " notify_fd : " << i << " in " << *this << " r = " << r << dendl;
+
   if (error)
     return -error;
   ssize_t read = 0;
@@ -362,18 +371,21 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
 
   for (size_t i = 0; i < cqe.size(); ++i) {
     ibv_wc* response = &cqe[i];
-    assert(response->status == IBV_WC_SUCCESS);
+    //assert(response->status == IBV_WC_SUCCESS);
     Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
     ldout(cct, 25) << __func__ << " chunk length: " << response->byte_len << " bytes." << chunk << dendl;
     chunk->prepare_read(response->byte_len);
     worker->perf_logger->inc(l_msgr_rdma_rx_bytes, response->byte_len);
-    if (response->byte_len == 0) {
+    if (response->byte_len == 0 || response->status != IBV_WC_SUCCESS) {
       dispatcher->perf_logger->inc(l_msgr_rdma_rx_fin);
       if (cmgr->connected) {
         error = ECONNRESET;
         ldout(cct, 1) << __func__ << " got remote close msg..." << dendl;
       }
-      assert(ibdev->post_chunk(chunk) == 0);
+      if (ibdev->support_srq) {
+        r = ibdev->post_chunk(chunk);
+      }
+
     } else {
       if (read == (ssize_t)len) {
         buffers.push_back(chunk);
@@ -384,7 +396,7 @@ ssize_t RDMAConnectedSocketImpl::read(char* buf, size_t len)
         ldout(cct, 25) << __func__ << " buffers add a chunk: " << chunk->get_offset() << ":" << chunk->get_bound() << dendl;
       } else {
         read += chunk->read(buf+read, response->byte_len);
-        assert(ibdev->post_chunk(chunk) == 0);
+        assert(ibdev->post_chunk(chunk, cmgr) == 0);
       }
     }
   }
@@ -408,7 +420,7 @@ ssize_t RDMAConnectedSocketImpl::read_buffers(char* buf, size_t len)
     read += tmp;
     ldout(cct, 25) << __func__ << " this iter read: " << tmp << " bytes." << " offset: " << (*c)->get_offset() << " ,bound: " << (*c)->get_bound()  << ". Chunk:" << *c  << dendl;
     if ((*c)->over()) {
-      assert(ibdev->post_chunk(*c) == 0);
+      assert(ibdev->post_chunk(*c, cmgr) == 0);
       ldout(cct, 25) << __func__ << " one chunk over." << dendl;
     }
     if (read == len) {
@@ -649,9 +661,9 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
 void RDMAConnectedSocketImpl::fin()
 {
   ldout(cct, 1) << __func__ << " sending FIN " << *this << dendl;
-
   ibv_send_wr wr;
   memset(&wr, 0, sizeof(wr));
+  assert(cmgr);
   wr.wr_id = reinterpret_cast<uint64_t>(cmgr);
   wr.num_sge = 0;
   wr.opcode = IBV_WR_SEND;
