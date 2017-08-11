@@ -78,7 +78,7 @@ RDMAConnCM::RDMAConnCM(CephContext *cct, RDMAConnectedSocketImpl *sock,
 RDMAConnCM::~RDMAConnCM()
 {
   ldout(cct, 1) << __func__ << " called" << dendl;
-
+  
   rdma_destroy_id(id);
   rdma_destroy_event_channel(channel);
 }
@@ -201,7 +201,7 @@ int RDMAConnCM::alloc_resources()
   ibport = id->port_num;
 
   ldout(cct, 1) << __func__ << " Device: " << *ibdev << " port: " << ibport << dendl;
-
+	
   ibdev->init(ibport, this);
 
   socket->register_qp(qp);
@@ -238,6 +238,7 @@ void RDMAConnCM::shutdown()
     rdma_disconnect(id);
 
   RDMAConnMgr::shutdown();
+
 }
 
 void RDMAConnCM::cleanup()
@@ -296,6 +297,7 @@ RDMAServerConnCM::RDMAServerConnCM(CephContext *cct, Infiniband *ib, RDMADispatc
 
 RDMAServerConnCM::~RDMAServerConnCM()
 {
+  ldout(cct, 1) << __func__ << " called" << dendl;
   rdma_destroy_id(listen_id);
   rdma_destroy_event_channel(channel);
 }
@@ -391,8 +393,9 @@ int RDMAServerConnCM::accept(ConnectedSocket *sock, const SocketOptions &opt, en
 
 void RDMAServerConnCM::abort_accept()
 {
-  rdma_destroy_id(listen_id);
-  rdma_destroy_event_channel(channel);
+  ldout(cct, 1) << __func__ << " called" << dendl;
+  //rdma_destroy_id(listen_id);
+  //rdma_destroy_event_channel(channel);
 }
 
 int RDMAServerConnCM::fd() const

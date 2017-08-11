@@ -51,6 +51,8 @@ class RDMAConnMgr {
   int connected;
 
  public:
+  typedef Infiniband::MemoryManager::Chunk Chunk;
+
   RDMAConnMgr(CephContext *cct, RDMAConnectedSocketImpl *sock,
 	      Infiniband* ib, RDMADispatcher* s, RDMAWorker *w, int r);
   virtual ~RDMAConnMgr() { };
@@ -74,6 +76,9 @@ class RDMAConnMgr {
   virtual void shutdown();
   void close();
 
+	QueuePair* get_qp() { return qp; }
+	RDMAConnectedSocketImpl* get_socket() { return socket; }
+
   virtual void set_orphan() { socket = nullptr; put(); };
 };
 inline ostream& operator<<(ostream& out, const RDMAConnMgr &m)
@@ -94,6 +99,8 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   typedef Infiniband::MemoryManager::Chunk Chunk;
   typedef Infiniband::CompletionChannel CompletionChannel;
   typedef Infiniband::CompletionQueue CompletionQueue;
+
+	std::vector<Chunk*> reserved_chunks;
 
  private:
   RDMAConnMgr *cmgr;
@@ -148,6 +155,8 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   void notify();
 
   int try_connect(const entity_addr_t &sa, const SocketOptions &opt) { return cmgr->try_connect(sa, opt); };
+	void reserve_chunk(Chunk* chunk) { reserved_chunks.push_back(chunk); }
+
 };
 inline ostream& operator<<(ostream& out, const RDMAConnectedSocketImpl &s)
 {

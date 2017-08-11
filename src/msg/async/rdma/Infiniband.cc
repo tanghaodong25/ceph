@@ -65,7 +65,9 @@ int Infiniband::QueuePair::init()
   if (srq != nullptr)
     qpia.srq = srq;                      // use the same shared receive queue
   qpia.cap.max_send_wr  = max_send_wr; // max outstanding send requests
+  qpia.cap.max_recv_wr  = max_recv_wr; // max outstanding recv requests
   qpia.cap.max_send_sge = 1;           // max send scatter-gather elements
+  qpia.cap.max_recv_sge = 1;           // max recv scatter-gather elements
   qpia.cap.max_inline_data = MAX_INLINE_DATA;          // max bytes of immediate data on send q
   qpia.qp_type = type;                 // RC, UC, UD, or XRC
   qpia.sq_sig_all = 0;                 // only generate CQEs on requested WQEs
@@ -574,6 +576,12 @@ void Infiniband::MemoryManager::register_rx_tx(uint32_t size, uint32_t rx_num, u
 void Infiniband::MemoryManager::return_tx(std::vector<Chunk*> &chunks)
 {
   send->take_back(chunks);
+}
+
+void Infiniband::MemoryManager::return_rx(std::vector<Chunk*> &chunks)
+{
+	return;
+	channel->take_back(chunks);	
 }
 
 int Infiniband::MemoryManager::get_send_buffers(std::vector<Chunk*> &c, size_t bytes)

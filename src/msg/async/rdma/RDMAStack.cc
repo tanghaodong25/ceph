@@ -149,13 +149,15 @@ void RDMADispatcher::polling()
         Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
         ldout(cct, 25) << __func__ << " got chunk=" << chunk << " bytes:" << response->byte_len << " opcode:" << response->opcode << dendl;
 
-        assert(wc[i].opcode == IBV_WC_RECV);
+        //assert(wc[i].opcode == IBV_WC_RECV);
 
         if (response->status == IBV_WC_SUCCESS) {
           conn = get_conn_lockless(response->qp_num);
           if (!conn) {
             assert(ibdev->is_rx_buffer(chunk->buffer));
-            r = ibdev->post_chunk(chunk);
+						if (ibdev->support_srq) {
+            	r = ibdev->post_chunk(chunk);
+						}
             ldout(cct, 1) << __func__ << " csi with qpn " << response->qp_num << " may be dead. chunk " << chunk << " will be back ? " << r << dendl;
             assert(r == 0);
           } else {
@@ -167,8 +169,12 @@ void RDMADispatcher::polling()
               << ") status(" << response->status << ":"
               << Infiniband::wc_status_to_string(response->status) << ")" << dendl;
           assert(ibdev->is_rx_buffer(chunk->buffer));
-          r = ibdev->post_chunk(chunk);
-          if (r) {
+
+					if (ibdev->support_srq) {
+            r = ibdev->post_chunk(chunk);
+					}
+
+          if (ibdev->support_srq && r) {
             ldout(cct, 0) << __func__ << " post chunk failed, error: " << cpp_strerror(r) << dendl;
             assert(r == 0);
           }
@@ -323,7 +329,7 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
     else {
       RDMAConnMgr *cmgr = reinterpret_cast<RDMAConnMgr *>(chunk);
       ldout(cct, 1) << __func__ << " got fin: " << *cmgr << dendl;
-      cmgr->qp_to_err();
+      //cmgr->qp_to_err();
     }
   }
 

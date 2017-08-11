@@ -238,6 +238,7 @@ OPTION(ms_async_rdma_local_gid, OPT_STR, "")       // GID format: "fe80:0000:000
 OPTION(ms_async_rdma_roce_ver, OPT_INT, 1)         // 0=RoCEv1, 1=RoCEv2, 2=RoCEv1.5
 OPTION(ms_async_rdma_sl, OPT_INT, 3)               // in RoCE, this means PCP
 OPTION(ms_async_rdma_cm, OPT_BOOL, false)	   // If true, RDMA-CM will use to establish connection
+OPTION(ms_async_rdma_support_srq, OPT_BOOL, true)
 
 OPTION(ms_dpdk_port_id, OPT_INT, 0)
 SAFE_OPTION(ms_dpdk_coremask, OPT_STR, "1")        // it is modified in unittest so that use SAFE_OPTION to declare 
