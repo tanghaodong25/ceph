@@ -368,6 +368,10 @@ int Device::post_channel_cluster(RDMAConnMgr* conn_mgr)
     int buffer_size = 
       cct->_conf->ms_async_rdma_recv_queue_per_connection*cct->_conf->ms_async_rdma_buffer_size;
     r = memory_manager->get_channel_buffers(free_chunks, buffer_size);
+    if (memory_manager->free_buffer_size() < cct->_conf->ms_async_rdma_recv_queue_per_connection) {
+      ldout(cct, 10) << __func__ << " no rx buffer, need register more" << dendl;
+      memory_manager->register_rx(cct->_conf->ms_async_rdma_receive_buffers); 
+    }
   }
   assert(r > 0);
   for (vector<Chunk*>::iterator iter = free_chunks.begin(); iter != free_chunks.end(); ++iter) {

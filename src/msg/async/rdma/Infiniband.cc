@@ -448,41 +448,50 @@ Infiniband::MemoryManager::Cluster::Cluster(MemoryManager& m, uint32_t s, CephCo
 
 Infiniband::MemoryManager::Cluster::~Cluster()
 {
-  const auto chunk_end = chunk_base + num_chunk;
-  for (auto chunk = chunk_base; chunk != chunk_end; chunk++) {
-    chunk->~Chunk();
+  for (auto chunk_pair: reg_chunks) {
+    Chunk *chunk_base = chunk_pair.first; 
+    Chunk *chunk_end = chunk_pair.first+chunk_pair.second;
+    for (auto chunk = chunk_base; chunk != chunk_end; chunk++) {
+      chunk->~Chunk(); 
+    }
+    ::free(chunk_base);
   }
 
-  ::free(chunk_base);
-  if (manager.enabled_huge_page)
-    manager.free_huge_pages(base);
-  else
-    ::free(base);
+  for (auto buffer_pair: reg_buffers) {
+    char *buffer_base = buffer_pair.first;
+    if (manager.enabled_huge_page)
+      manager.free_huge_pages(buffer_base);
+    else
+      ::free(buffer_base);
+  }
+  
 }
 
 int Infiniband::MemoryManager::Cluster::fill(uint32_t num)
 {
-  assert(!base);
-  num_chunk = num;
+  char *cur_base = nullptr;
+  Chunk *cur_chunk_base = nullptr;
+  num_chunk += num;
   uint64_t bytes = buffer_size * num;
   if (manager.enabled_huge_page) {
-    base = (char*)manager.malloc_huge_pages(bytes);
+    cur_base = (char*)manager.malloc_huge_pages(bytes); 
   } else {
-    base = (char*)memalign(CEPH_PAGE_SIZE, bytes);
+    cur_base = (char*)memalign(CEPH_PAGE_SIZE, bytes); 
   }
-  end = base + bytes;
-  assert(base);
-  chunk_base = static_cast<Chunk*>(::malloc(sizeof(Chunk) * num));
-  memset(chunk_base, 0, sizeof(Chunk) * num);
-  free_chunks.reserve(num);
-  Chunk* chunk = chunk_base;
-  for (uint64_t offset = 0; offset < bytes; offset += buffer_size){
-    ibv_mr* m = ibv_reg_mr(manager.pd->pd, base+offset, buffer_size, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
+  assert(cur_base);
+  
+  cur_chunk_base = static_cast<Chunk*>(::malloc(sizeof(Chunk) * num));
+  memset(cur_chunk_base, 0, sizeof(Chunk)*num);
+  Chunk* chunk = cur_chunk_base;
+  for (uint64_t offset = 0; offset < bytes; offset += buffer_size) {
+    ibv_mr *m = ibv_reg_mr(manager.pd->pd, cur_base+offset, buffer_size, IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE);
     assert(m);
-    new(chunk) Chunk(m, buffer_size, base+offset);
+    new(chunk) Chunk(m, buffer_size, cur_base+offset);
     free_chunks.push_back(chunk);
     chunk++;
   }
+  reg_buffers.push_back(std::pair<char*, uint64_t>(cur_base, bytes));
+  reg_chunks.push_back(std::pair<Chunk*, uint64_t>(cur_chunk_base, num));
   return 0;
 }
 
@@ -571,6 +580,14 @@ void Infiniband::MemoryManager::register_rx_tx(uint32_t size, uint32_t rx_num, u
 
   send = new Cluster(*this, size, cct);
   send->fill(tx_num);
+}
+
+void Infiniband::MemoryManager::register_rx(uint32_t rx_num)
+{
+  assert(device);
+  assert(pd);
+  assert(channel);
+  channel->fill(rx_num);
 }
 
 void Infiniband::MemoryManager::return_tx(std::vector<Chunk*> &chunks)

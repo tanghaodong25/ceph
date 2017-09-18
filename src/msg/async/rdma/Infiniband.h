@@ -103,12 +103,29 @@ class Infiniband {
       void take_back(std::vector<Chunk*> &ck);
       int get_buffers(std::vector<Chunk*> &chunks, size_t bytes);
       Chunk *get_chunk_by_buffer(const char *c) {
-        uint32_t idx = (c - base) / buffer_size;
-        Chunk *chunk = chunk_base + idx;
+        int chk_idx = 0;
+        Chunk *chunk = nullptr;
+        for (auto buffer_pair: reg_buffers) {
+          if (c >= buffer_pair.first && c <  buffer_pair.first+buffer_pair.second) {
+            uint32_t idx = (c-buffer_pair.first) / buffer_size;
+            chunk = reg_chunks[chk_idx].first+idx;
+            if (chunk)
+              return chunk;
+          }
+          chk_idx++;
+        } 
         return chunk;
       }
       bool is_my_buffer(const char *c) const {
-        return c >= base && c < end;
+        bool ret = false;
+        for (auto buffer_pair: reg_buffers) {
+          if (c >= buffer_pair.first && c < buffer_pair.first+buffer_pair.second) {
+            ret = true;
+            if (ret)
+              return ret;
+          }
+        }
+        return ret;
       }
 
       MemoryManager& manager;
@@ -116,9 +133,10 @@ class Infiniband {
       uint32_t num_chunk;
       Mutex lock;
       std::vector<Chunk*> free_chunks;
-      char *base = nullptr;
-      char *end = nullptr;
-      Chunk* chunk_base = nullptr;
+
+      std::vector<std::pair<Chunk*, uint64_t>> reg_chunks;
+      std::vector<std::pair<char*, uint64_t>> reg_buffers;
+
       CephContext* cct;
     };
 
@@ -128,6 +146,7 @@ class Infiniband {
     void* malloc_huge_pages(size_t size);
     void free_huge_pages(void *ptr);
     void register_rx_tx(uint32_t size, uint32_t rx_num, uint32_t tx_num);
+    void register_rx(uint32_t rx_num);
     void return_tx(std::vector<Chunk*> &chunks);
     void return_rx(std::vector<Chunk*> &chunks);
     int get_send_buffers(std::vector<Chunk*> &c, size_t bytes);
