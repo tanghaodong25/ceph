@@ -56,31 +56,32 @@ RDMAConnCM::RDMAConnCM(CephContext *cct, RDMAConnectedSocketImpl *sock,
     id->context = socket;
 
     err = rdma_migrate_id(id, channel);
+    assert(id->channel == channel);
     assert(!err);
 
     socket->remote_qpn = info->remote_qpn;
 
-    err = alloc_resources();
-    assert(!err);
-
-    activate();
-
     ldout(cct, 1) << __func__ << " (server) " << *this << dendl;
     return;
   }
-
   err = rdma_create_id(channel, &id, NULL, RDMA_PS_TCP);
   assert(!err);
-
+  
   ldout(cct, 1) << __func__ << " " << *this << dendl;
 }
 
 RDMAConnCM::~RDMAConnCM()
 {
   ldout(cct, 1) << __func__ << " called" << dendl;
-  
-  rdma_destroy_id(id);
   rdma_destroy_event_channel(channel);
+}
+
+void RDMAConnCM::init()
+{
+  int err = alloc_resources();
+  assert(!err);  
+
+  activate();
 }
 
 int RDMAConnCM::try_connect(const entity_addr_t &peer_addr,
@@ -110,9 +111,8 @@ int RDMAConnCM::try_connect(const entity_addr_t &peer_addr,
 #define TIMEOUT 2000
   err = rdma_resolve_addr(id, rai->ai_src_addr, rai->ai_dst_addr, TIMEOUT);
   assert(!err);
-
+  
   rdma_freeaddrinfo(rai);
-
   return 0;
 }
 
@@ -121,12 +121,12 @@ void RDMAConnCM::handle_cm_event()
   struct rdma_cm_event *event;
   int err;
 
-  ldout(cct, 1) << __func__ << dendl;
+  ldout(cct, 20) << __func__ << dendl;
 
   err = rdma_get_cm_event(id->channel, &event);
   assert(!err);
 
-  ldout(cct, 1) << __func__ << " " << *this << " event: " << rdma_event_str(event->event) << dendl;
+  ldout(cct, 20) << __func__ << " " << *this << " event: " << rdma_event_str(event->event) << dendl;
 
   switch (event->event) {
   case RDMA_CM_EVENT_ADDR_RESOLVED:
@@ -143,13 +143,14 @@ void RDMAConnCM::handle_cm_event()
     memset(&conn_param, 0, sizeof(conn_param));
     conn_param.qp_num = socket->local_qpn;
     conn_param.srq = 1;
-    conn_param.initiator_depth = 128;
-    conn_param.responder_resources = 128;
     conn_param.retry_count = 7;
     conn_param.rnr_retry_count = 7;
-
+    
     err = rdma_connect(id, &conn_param);
-    assert(!err);
+    if (err) {
+      connected = -ECONNREFUSED;
+      socket->fault();
+    }
     break;
 
   case RDMA_CM_EVENT_ESTABLISHED:
@@ -159,24 +160,15 @@ void RDMAConnCM::handle_cm_event()
   case RDMA_CM_EVENT_DISCONNECTED:
     if (!socket)
       break;
-
-    if (socket->error) {
-      socket->error = ECONNRESET;
-      close();
-    } else {
-      rdma_disconnect(id);
-      connected = 0;
+    if (!socket->error) {
       socket->abort_connection();
       return;
     }
-
-    rdma_disconnect(id);
     break;
 
   case RDMA_CM_EVENT_TIMEWAIT_EXIT:
-    cleanup();
+    socket->fault();
     rdma_ack_cm_event(event);
-    put();
 
     return;
 
@@ -230,13 +222,11 @@ void RDMAConnCM::cm_established(uint32_t qpn)
       assert(!r);
     }
     socket->notify();
-
     return;
   }
 
   // server finished getting connected from client
   connected = 1;
-  cleanup();
   socket->submit(false);
   socket->notify();
 }
@@ -244,13 +234,14 @@ void RDMAConnCM::cm_established(uint32_t qpn)
 void RDMAConnCM::shutdown()
 {
   ldout(cct, 1) << __func__ << dendl;
-  if (socket->error) {
+  if (socket->error == ECONNRESET && connected == 1) {
     ldout(cct, 20) << __func__ << " rdma disconnect" << dendl;
+    cleanup();
+    connected = 0;
     rdma_disconnect(id);
   }
 
   RDMAConnMgr::shutdown();
-
 }
 
 void RDMAConnCM::cleanup()
@@ -386,13 +377,13 @@ int RDMAServerConnCM::accept(ConnectedSocket *sock, const SocketOptions &opt, en
   memset(&conn_param, 0, sizeof(conn_param));
   conn_param.qp_num = socket->local_qpn;
   conn_param.srq = 1;
-  conn_param.initiator_depth = 128;
-  conn_param.responder_resources = 128;
   conn_param.retry_count = 7;
   conn_param.rnr_retry_count = 7;
 
   ret = rdma_accept(new_id, &conn_param);
-  assert(!ret);
+  if (ret) {
+    return -errno; 
+  }
 
   ldout(cct, 20) << __func__ << " accepted a new QP" << dendl;
 

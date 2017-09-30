@@ -56,6 +56,8 @@ RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* i
     cmgr = new RDMAConnCM(cct, this, ib, s, w, info);
   else
     cmgr = new RDMAConnTCP(cct, this, ib, s, w, info);
+  if (cmgr->is_server)
+    cmgr->init();
 }
 
 int RDMAConnMgr::create_queue_pair()
@@ -135,9 +137,8 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
     assert(ret == 0);
   }
   
-  if (reserved == 0)
-    cmgr->ibdev->get_memory_manager()->return_rx(reserved_chunks);
-  
+  cmgr->ibdev->get_memory_manager()->return_rx(reserved_chunks);
+
   cmgr->cleanup();
   cmgr->set_orphan();
   cmgr = nullptr;
@@ -658,27 +659,6 @@ int RDMAConnectedSocketImpl::post_work_request(std::vector<Chunk*> &tx_buffers)
   return 0;
 }
 
-void RDMAConnectedSocketImpl::fin()
-{
-  ldout(cct, 1) << __func__ << " sending FIN " << *this << dendl;
-  ibv_send_wr wr;
-  memset(&wr, 0, sizeof(wr));
-  assert(cmgr);
-  wr.wr_id = reinterpret_cast<uint64_t>(cmgr);
-  wr.num_sge = 0;
-  wr.opcode = IBV_WR_SEND;
-  wr.send_flags = IBV_SEND_SIGNALED;
-  ibv_send_wr* bad_tx_work_request;
-  int err = ibv_post_send(cmgr->qp->get_qp(), &wr, &bad_tx_work_request);
-  if (err) {
-    ldout(cct, 1) << __func__ << " failed to send message="
-                  << " ibv_post_send failed(most probably should be peer not ready): "
-                  << cpp_strerror(err) << dendl;
-    worker->perf_logger->inc(l_msgr_rdma_tx_failed);
-    return ;
-  }
-}
-
 void RDMAConnTCP::cleanup() {
   if (con_handler && tcp_fd >= 0) {
     (static_cast<C_handle_connection*>(con_handler))->close();
@@ -701,8 +681,6 @@ void RDMAConnectedSocketImpl::notify()
 
 void RDMAConnMgr::shutdown()
 {
-  if (!socket->error)
-    socket->fin();
   socket->error = ECONNRESET;
   active = false;
 }
@@ -715,12 +693,7 @@ void RDMAConnMgr::close()
 void RDMAConnectedSocketImpl::fault()
 {
   ldout(cct, 1) << __func__ << dendl;
-  /*if (qp) {
-    qp->to_dead();
-    qp = NULL;
-    }*/
   error = ECONNRESET;
-  cmgr->connected = 0;
   notify();
 }
 

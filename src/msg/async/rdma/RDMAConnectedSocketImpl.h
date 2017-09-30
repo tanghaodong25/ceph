@@ -57,6 +57,7 @@ class RDMAConnMgr {
 	      Infiniband* ib, RDMADispatcher* s, RDMAWorker *w, int r);
   virtual ~RDMAConnMgr() { };
 
+  virtual void init() {};
   virtual void put();
 
   virtual ostream &print(ostream &out) const = 0;
@@ -149,7 +150,6 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   virtual int fd() const override { return notify_fd; }
   void fault();
   ssize_t submit(bool more);
-  void fin();
   void abort_connection();
   int get_gid_idx();
   void register_qp(QueuePair *qp);

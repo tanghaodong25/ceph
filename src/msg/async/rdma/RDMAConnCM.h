@@ -25,8 +25,6 @@
 #include "RDMAConnectedSocketImpl.h"
 #include "Device.h"
 
-#include <queue>
-
 struct RDMAConnCMInfo {
   struct rdma_cm_id *id;
   uint32_t remote_qpn;
@@ -48,6 +46,7 @@ public:
 	     void *info);
   virtual ~RDMAConnCM();
 
+  virtual void init();
   virtual int try_connect(const entity_addr_t&, const SocketOptions &opt) override;
   int alloc_resources();
   virtual void shutdown() override;

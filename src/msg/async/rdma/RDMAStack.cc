@@ -119,7 +119,7 @@ void RDMADispatcher::process_async_event(Device *ibdev, ibv_async_event &async_e
 
 void RDMADispatcher::polling()
 {
-  static int MAX_COMPLETIONS = 128;
+  static int MAX_COMPLETIONS = 32;
   ibv_wc wc[MAX_COMPLETIONS];
 
   std::map<RDMAConnectedSocketImpl*, std::vector<ibv_wc> > polled;
@@ -148,9 +148,6 @@ void RDMADispatcher::polling()
       for (int i = 0; i < rx_ret; ++i) {
         ibv_wc* response = &wc[i];
         Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
-        ldout(cct, 25) << __func__ << " got chunk=" << chunk << " bytes:" << response->byte_len << " opcode:" << response->opcode << dendl;
-
-        assert(wc[i].opcode == IBV_WC_RECV);
 
         if (response->status == IBV_WC_SUCCESS) {
           conn = get_conn_lockless(response->qp_num);
@@ -164,6 +161,8 @@ void RDMADispatcher::polling()
           } else {
             polled[conn].push_back(*response);
           }
+        } else if (response->status == IBV_WC_WR_FLUSH_ERR || wc[i].opcode != IBV_WC_RECV) {
+          ldout(cct, 35) << __func__ << " work request flushed error, this connection's qp=" << response->qp_num << dendl; 
         } else {
           perf_logger->inc(l_msgr_rdma_rx_total_wc_errors);
           ldout(cct, 1) << __func__ << " work request returned error for buffer(" << chunk
@@ -327,14 +326,8 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
       }
     }
 
-    // FIXME: why not tx?
     if (ibdev->get_memory_manager()->is_tx_buffer(chunk->buffer))
       tx_chunks.push_back(chunk);
-    else {
-      RDMAConnMgr *cmgr = reinterpret_cast<RDMAConnMgr *>(chunk);
-      ldout(cct, 1) << __func__ << " got fin: " << *cmgr << dendl;
-      cmgr->qp_to_err();
-    }
   }
 
   perf_logger->inc(l_msgr_rdma_tx_total_wc, n);
