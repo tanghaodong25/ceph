@@ -63,8 +63,8 @@ RDMAConnectedSocketImpl::RDMAConnectedSocketImpl(CephContext *cct, Infiniband* i
 int RDMAConnMgr::create_queue_pair()
 {
   qp = ibdev->create_queue_pair(ibport, IBV_QPT_RC, this);
-
-  socket->local_qpn = qp->get_local_qp_number();
+  if (qp)
+    socket->local_qpn = qp->get_local_qp_number();
 
   return !qp;
 }
@@ -137,7 +137,8 @@ RDMAConnectedSocketImpl::~RDMAConnectedSocketImpl()
     assert(ret == 0);
   }
   
-  cmgr->ibdev->get_memory_manager()->return_rx(reserved_chunks);
+  if (cmgr->ibdev) 
+    cmgr->ibdev->get_memory_manager()->return_rx(reserved_chunks);
 
   cmgr->cleanup();
   cmgr->set_orphan();

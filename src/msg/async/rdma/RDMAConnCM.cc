@@ -79,7 +79,10 @@ RDMAConnCM::~RDMAConnCM()
 void RDMAConnCM::init()
 {
   int err = alloc_resources();
-  assert(!err);  
+  if (err) {
+    socket->fault();
+    return;
+  }
 
   activate();
 }
@@ -131,7 +134,10 @@ void RDMAConnCM::handle_cm_event()
   switch (event->event) {
   case RDMA_CM_EVENT_ADDR_RESOLVED:
     err = alloc_resources();
-    assert(!err);
+    if (err) {
+      socket->fault();
+      break;
+    }
 
     err = rdma_resolve_route(id, TIMEOUT);
     assert(!err);
@@ -204,7 +210,10 @@ int RDMAConnCM::alloc_resources()
 
   ldout(cct, 1) << __func__ << " Device: " << *ibdev << " port: " << ibport << dendl;
 	
-  ibdev->init(ibport, this);
+  int err = ibdev->init(ibport, this);
+  if (err) {
+    return -errno;
+  }
 
   socket->register_qp(qp);
 

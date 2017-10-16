@@ -155,7 +155,7 @@ Device::Device(CephContext *cct, Infiniband *ib, struct ibv_context *ctxt)
   assert(NetHandler(cct).set_nonblock(ctxt->async_fd) == 0);
 }
 
-void Device::init(int ibport, RDMAConnMgr* conn_mgr)
+int Device::init(int ibport, RDMAConnMgr* conn_mgr)
 {
   Mutex::Locker l(lock);
 
@@ -194,7 +194,10 @@ void Device::init(int ibport, RDMAConnMgr* conn_mgr)
     assert(rx_cq);
   }
   
-  conn_mgr->create_queue_pair();
+  int err = conn_mgr->create_queue_pair();
+  if (err)
+    return err;
+
   if (support_srq) {
     if (!initialized) {
       post_channel_cluster(conn_mgr);
@@ -205,6 +208,7 @@ void Device::init(int ibport, RDMAConnMgr* conn_mgr)
 
   initialized = true;
   ldout(cct, 5) << __func__ << ":" << __LINE__ << " device " << *this << " is initialized" << dendl;
+  return 0;
 }
 
 void Device::uninit()

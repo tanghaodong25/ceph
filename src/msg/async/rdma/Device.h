@@ -92,7 +92,7 @@ class Device {
   explicit Device(CephContext *c, Infiniband *ib, struct ibv_context *ctxt);
   ~Device();
 
-  void init(int ibport = -1, RDMAConnMgr* conn_mgr = nullptr);
+  int init(int ibport = -1, RDMAConnMgr* conn_mgr = nullptr);
   void uninit();
 
   void handle_async_event();

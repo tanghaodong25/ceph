@@ -147,12 +147,18 @@ void RDMADispatcher::polling()
       Mutex::Locker l(lock);//make sure connected socket alive when pass wc
       for (int i = 0; i < rx_ret; ++i) {
         ibv_wc* response = &wc[i];
+        if (!response) 
+          continue;
         Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
-
+        if (!chunk)
+          continue;
+        if (!ibdev->is_rx_buffer(chunk->buffer)) {
+          continue; 
+        }
         if (response->status == IBV_WC_SUCCESS) {
+          ldout(cct, 30) << __func__ << " work request state success, this connection's qp=" << response->qp_num << dendl; 
           conn = get_conn_lockless(response->qp_num);
           if (!conn) {
-            assert(ibdev->is_rx_buffer(chunk->buffer));
             if (ibdev->support_srq) {
               r = ibdev->post_chunk(chunk);
               assert(r == 0);
@@ -162,21 +168,19 @@ void RDMADispatcher::polling()
             polled[conn].push_back(*response);
           }
         } else if (response->status == IBV_WC_WR_FLUSH_ERR || wc[i].opcode != IBV_WC_RECV) {
-          ldout(cct, 35) << __func__ << " work request flushed error, this connection's qp=" << response->qp_num << dendl; 
+          ldout(cct, 30) << __func__ << " work request flushed error, this connection's qp=" << response->qp_num << dendl; 
         } else {
           perf_logger->inc(l_msgr_rdma_rx_total_wc_errors);
-          ldout(cct, 1) << __func__ << " work request returned error for buffer(" << chunk
+          ldout(cct, 0) << __func__ << " work request returned error for buffer(" << chunk
               << ") status(" << response->status << ":"
               << Infiniband::wc_status_to_string(response->status) << ")" << dendl;
           assert(ibdev->is_rx_buffer(chunk->buffer));
           if (ibdev->support_srq) {
             r = ibdev->post_chunk(chunk);
-          }
-
-          if (ibdev->support_srq && r) {
-            ldout(cct, 0) << __func__ << " post chunk failed, error: " << cpp_strerror(r) << dendl;
-            assert(r == 0);
-          }
+            if (r) {
+              ldout(cct, 0) << __func__ << " post chunk failed, error: " << cpp_strerror(r) << dendl; 
+            }
+          } 
           conn = get_conn_lockless(response->qp_num);
           if (conn && conn->is_connected()) {
             conn->fault();
@@ -295,7 +299,14 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
 
   for (int i = 0; i < n; ++i) {
     ibv_wc* response = &cqe[i];
+    if (!response)
+      continue;
     Chunk* chunk = reinterpret_cast<Chunk *>(response->wr_id);
+    if (!chunk)
+      continue;
+    if (ibdev->get_memory_manager()->is_tx_buffer(chunk->buffer))
+      tx_chunks.push_back(chunk);
+
     ldout(cct, 25) << __func__ << " QP: " << response->qp_num
                    << " len: " << response->byte_len << " , addr:" << chunk
                    << " " << global_infiniband->wc_status_to_string(response->status) << dendl;
@@ -303,15 +314,15 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
     if (response->status != IBV_WC_SUCCESS) {
       perf_logger->inc(l_msgr_rdma_tx_total_wc_errors);
       if (response->status == IBV_WC_RETRY_EXC_ERR) {
-        ldout(cct, 1) << __func__ << " connection between server and client not working. Disconnect this now" << dendl;
+        ldout(cct, 0) << __func__ << " connection between server and client not working. Disconnect this now" << dendl;
         perf_logger->inc(l_msgr_rdma_tx_wc_retry_errors);
       } else if (response->status == IBV_WC_WR_FLUSH_ERR) {
-        ldout(cct, 1) << __func__ << " Work Request Flushed Error: this connection's qp="
+        ldout(cct, 0) << __func__ << " Work Request Flushed Error: this connection's qp="
                       << response->qp_num << " should be down while this WR=" << response->wr_id
                       << " still in flight." << dendl;
         perf_logger->inc(l_msgr_rdma_tx_wc_wr_flush_errors);
       } else {
-        ldout(cct, 1) << __func__ << " send work request returned error for buffer("
+        ldout(cct, 0) << __func__ << " send work request returned error for buffer("
                       << response->wr_id << ") status(" << response->status << "): "
                       << global_infiniband->wc_status_to_string(response->status) << dendl;
       }
@@ -320,14 +331,12 @@ void RDMADispatcher::handle_tx_event(Device *ibdev, ibv_wc *cqe, int n)
       RDMAConnectedSocketImpl *conn = get_conn_lockless(response->qp_num);
 
       if (conn && conn->is_connected()) {
+        ldout(cct, 0) << __func__ << " connection fault" << dendl;
         conn->fault();
       } else {
-        ldout(cct, 1) << __func__ << " missing qp_num=" << response->qp_num << " discard event" << dendl;
+        ldout(cct, 0) << __func__ << " missing qp_num=" << response->qp_num << " discard event" << dendl;
       }
     }
-
-    if (ibdev->get_memory_manager()->is_tx_buffer(chunk->buffer))
-      tx_chunks.push_back(chunk);
   }
 
   perf_logger->inc(l_msgr_rdma_tx_total_wc, n);
@@ -442,7 +451,7 @@ int RDMAWorker::get_reged_mem(RDMAConnectedSocketImpl *o, std::vector<Chunk*> &c
   size_t got = ibdev->get_memory_manager()->get_tx_buffer_size() * r;
   ldout(cct, 30) << __func__ << " need " << bytes << " bytes, reserve " << got << " registered  bytes, inflight " << dispatcher->inflight << dendl;
   stack->get_dispatcher()->inflight += r;
-  if (got == bytes)
+  if (got >= bytes)
     return r;
 
   if (o) {
