@@ -385,7 +385,9 @@ if(HAVE_RDMA)
   list(APPEND async_rdma_common_srcs
     msg/async/rdma/Infiniband.cc
     msg/async/rdma/RDMAConnectedSocketImpl.cc
+    msg/async/rdma/RDMACMConnectedSocketImpl.cc
     msg/async/rdma/RDMAServerSocketImpl.cc
+    msg/async/rdma/RDMACMServerSocketImpl.cc
     msg/async/rdma/RDMAStack.cc)
 endif(HAVE_RDMA)
 
@@ -628,7 +630,7 @@ set(ceph_common_deps
   ${CMAKE_THREAD_LIBS_INIT}
   ${CMAKE_DL_LIBS})
 if(HAVE_RDMA)
-  list(APPEND ceph_common_deps ${RDMA_LIBRARY})
+  list(APPEND ceph_common_deps ${RDMA_LIBRARIES})
 endif()
 if(NOT WITH_SYSTEM_BOOST)
   list(APPEND ceph_common_deps ${ZLIB_LIBRARIES})
