@@ -492,8 +492,12 @@ int RDMAWorker::listen(entity_addr_t &sa, const SocketOptions &opt,ServerSocket 
 {
   get_stack()->get_infiniband().init();
   dispatcher->polling_start();
-
-  auto p = new RDMAServerSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this, sa);
+  RDMAServerSocketImpl *p; 
+  if (cct->_conf->ms_async_rdma_cm) {
+    p = new RDMACMServerSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this, sa);
+  } else {
+    p = new RDMAServerSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this, sa);
+  }
   int r = p->listen(sa, opt);
   if (r < 0) {
     delete p;
@@ -508,8 +512,13 @@ int RDMAWorker::connect(const entity_addr_t &addr, const SocketOptions &opts, Co
 {
   get_stack()->get_infiniband().init();
   dispatcher->polling_start();
-
-  RDMAConnectedSocketImpl* p = new RDMAConnectedSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this);
+  
+  RDMAConnectedSocketImpl* p;
+  if (cct->_conf->ms_async_rdma_cm) {
+    p = new RDMACMConnectedSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this);
+  } else {
+    p = new RDMAConnectedSocketImpl(cct, &get_stack()->get_infiniband(), &get_stack()->get_dispatcher(), this);
+  }
   int r = p->try_connect(addr, opts);
 
   if (r < 0) {

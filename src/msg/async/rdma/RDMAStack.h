@@ -22,6 +22,7 @@
 #include <list>
 #include <vector>
 #include <thread>
+#include <semaphore.h>
 
 #include "common/ceph_context.h"
 #include "common/debug.h"
@@ -164,13 +165,20 @@ class RDMAWorker : public Worker {
   }
 };
 
+struct RDMACMInfo {
+  RDMACMInfo(struct rdma_cm_id *cm_id_, struct rdma_event_channel *cm_channel_, uint32_t qp_num_) : cm_id(cm_id_), cm_channel(cm_channel_), qp_num(qp_num_) {}
+  struct rdma_cm_id *cm_id;
+  struct rdma_event_channel *cm_channel;
+  uint32_t qp_num;
+};
+
 class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
  public:
   typedef Infiniband::MemoryManager::Chunk Chunk;
   typedef Infiniband::CompletionChannel CompletionChannel;
   typedef Infiniband::CompletionQueue CompletionQueue;
-
- private:
+  
+ protected:
   CephContext *cct;
   Infiniband::QueuePair *qp;
   IBSYNMsg peer_msg;
@@ -198,7 +206,7 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
 
  public:
   RDMAConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
-                          RDMAWorker *w);
+                          RDMAWorker *w, RDMACMInfo *info = nullptr);
   virtual ~RDMAConnectedSocketImpl();
 
   void pass_wc(std::vector<ibv_wc> &&v);
@@ -219,9 +227,10 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   void handle_connection();
   void cleanup();
   void set_accept_fd(int sd);
-  int try_connect(const entity_addr_t&, const SocketOptions &opt);
+  virtual int try_connect(const entity_addr_t&, const SocketOptions &opt);
   bool is_pending() {return pending;}
   void set_pending(bool val) {pending = val;}
+
   class C_handle_connection : public EventCallback {
     RDMAConnectedSocketImpl *csi;
     bool active;
@@ -237,23 +246,69 @@ class RDMAConnectedSocketImpl : public ConnectedSocketImpl {
   };
 };
 
+class RDMACMConnectedSocketImpl : public RDMAConnectedSocketImpl {
+  public:
+    RDMACMConnectedSocketImpl(CephContext *cct, Infiniband* ib, RDMADispatcher* s,
+                          RDMAWorker *w, RDMACMInfo *info = nullptr);
+    ~RDMACMConnectedSocketImpl();
+    virtual int try_connect(const entity_addr_t&, const SocketOptions &opt) override;
+    virtual void close() override;
+    virtual void shutdown() override;
+    virtual void handle_cm_connection();
+    uint32_t get_local_qpn();
+    void activate(); 
+    void alloc_resource();
+    void close_notify();
+
+  private:
+    struct rdma_cm_id *cm_id;
+    struct rdma_event_channel *cm_channel;
+    uint32_t local_qpn;
+    uint32_t remote_qpn;
+    EventCallbackRef cm_con_handler;
+    bool is_server;
+    std::mutex close_mtx;
+    std::condition_variable close_condition;
+    bool closed;
+
+  class C_handle_cm_connection : public EventCallback {
+    RDMACMConnectedSocketImpl *csi;
+    public:
+      C_handle_cm_connection(RDMACMConnectedSocketImpl *w): csi(w) {}
+      void do_request(uint64_t fd) {
+        csi->handle_cm_connection();
+      }
+  };
+};
+
 class RDMAServerSocketImpl : public ServerSocketImpl {
-  CephContext *cct;
-  NetHandler net;
-  int server_setup_socket;
-  Infiniband* infiniband;
-  RDMADispatcher *dispatcher;
-  RDMAWorker *worker;
-  entity_addr_t sa;
+  protected:
+    CephContext *cct;
+    NetHandler net;
+    int server_setup_socket;
+    Infiniband* infiniband;
+    RDMADispatcher *dispatcher;
+    RDMAWorker *worker;
+    entity_addr_t sa;
 
  public:
   RDMAServerSocketImpl(CephContext *cct, Infiniband* i, RDMADispatcher *s, RDMAWorker *w, entity_addr_t& a);
 
-  int listen(entity_addr_t &sa, const SocketOptions &opt);
+  virtual int listen(entity_addr_t &sa, const SocketOptions &opt);
   virtual int accept(ConnectedSocket *s, const SocketOptions &opts, entity_addr_t *out, Worker *w) override;
   virtual void abort_accept() override;
   virtual int fd() const override { return server_setup_socket; }
   int get_fd() { return server_setup_socket; }
+};
+
+class RDMACMServerSocketImpl : public RDMAServerSocketImpl {
+  public:
+    RDMACMServerSocketImpl(CephContext *cct, Infiniband *i, RDMADispatcher *s, RDMAWorker *w, entity_addr_t& a);
+    virtual int listen(entity_addr_t &sa, const SocketOptions &opt) override;
+    virtual int accept(ConnectedSocket *s, const SocketOptions &opts, entity_addr_t *out, Worker *w) override;
+  private:
+    struct rdma_cm_id *cm_id;
+    struct rdma_event_channel *cm_channel;
 };
 
 class RDMAStack : public NetworkStack {

@@ -75,8 +75,9 @@ err:
 int RDMAServerSocketImpl::accept(ConnectedSocket *sock, const SocketOptions &opt, entity_addr_t *out, Worker *w)
 {
   ldout(cct, 15) << __func__ << dendl;
-
+  
   assert(sock);
+
   sockaddr_storage ss;
   socklen_t slen = sizeof(ss);
   int sd = ::accept(server_setup_socket, (sockaddr*)&ss, &slen);
@@ -118,3 +119,4 @@ void RDMAServerSocketImpl::abort_accept()
   if (server_setup_socket >= 0)
     ::close(server_setup_socket);
 }
+
