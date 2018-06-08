@@ -172,11 +172,17 @@ if(WITH_STATIC_LIBSTDCXX)
   endif()
 endif()
 
-option(WITH_RDMA "Enable RDMA in async messenger" ON)
-if(WITH_RDMA)
-  find_package(rdma REQUIRED)
-  set(HAVE_RDMA ${RDMA_FOUND})
-endif(WITH_RDMA)
+option(WITH_VERBS "Enable RDMA verbs in async messenger" ON)
+if(WITH_VERBS)
+  find_package(verbs REQUIRED)
+  set(HAVE_VERBS ${VERBS_FOUND})
+endif(WITH_VERBS)
+
+option(WITH_RDMACM "Enable RDMA cm in async messenger" ON)
+if(WITH_RDMACM)
+  find_package(rdmacm REQUIRED)
+  set(HAVE_RDMACM ${RDMACM_FOUND})
+endif(WITH_RDMACM)
 
 find_package(Backtrace)
 
@@ -295,7 +301,7 @@ endif()
 
 option(WITH_LZ4 "LZ4 compression support" ON)
 if(WITH_LZ4)
-  find_package(LZ4 1.7 REQUIRED)
+  find_package(LZ4 1.0 REQUIRED)
   set(HAVE_LZ4 ${LZ4_FOUND})
 endif(WITH_LZ4)
 

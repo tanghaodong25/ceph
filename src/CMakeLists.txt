@@ -296,10 +296,16 @@ if(HAVE_XIO)
   list(APPEND EXTRALIBS ${XIO_LIBRARY} pthread)
 endif(HAVE_XIO)
 
-if(HAVE_RDMA)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${RDMA_INCLUDE_DIR}")
-  list(APPEND EXTRALIBS ${RDMA_LIBRARIES} pthread)
-endif(HAVE_RDMA)
+if(HAVE_RDMACM)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${RDMACM_INCLUDE_DIR}")
+  list(APPEND EXTRALIBS ${RDMACM_LIBRARY} pthread)
+endif(HAVE_RDMACM)
+
+if(HAVE_VERBS)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${VERBS_INCLUDE_DIR}")
+  list(APPEND EXTRALIBS ${VERBS_LIBRARY} pthread)
+endif(HAVE_VERBS)
+
 
 # sort out which allocator to use
 if(ALLOCATOR STREQUAL "tcmalloc")
@@ -398,7 +404,7 @@ if(HAVE_XIO)
 endif(HAVE_XIO)
 
 set(async_rdma_common_srcs)
-if(HAVE_RDMA)
+if(HAVE_VERBS AND HAVE_RDMACM)
   list(APPEND async_rdma_common_srcs
     msg/async/rdma/Infiniband.cc
     msg/async/rdma/RDMAConnectedSocketImpl.cc
@@ -406,7 +412,7 @@ if(HAVE_RDMA)
     msg/async/rdma/RDMAServerSocketImpl.cc
     msg/async/rdma/RDMAIWARPServerSocketImpl.cc
     msg/async/rdma/RDMAStack.cc)
-endif(HAVE_RDMA)
+endif()
 
 add_library(common_buffer_obj OBJECT
   common/buffer.cc)
@@ -644,8 +650,11 @@ set(ceph_common_deps
   ${CRYPTO_LIBS}
   ${CMAKE_THREAD_LIBS_INIT}
   ${CMAKE_DL_LIBS})
-if(HAVE_RDMA)
-  list(APPEND ceph_common_deps ${RDMA_LIBRARIES})
+if(HAVE_VERBS)
+  list(APPEND ceph_common_deps ${VERBS_LIBRARY})
+endif()
+if(HAVE_RDMACM)
+  list(APPEND ceph_common_deps ${RDMACM_LIBRARY})
 endif()
 if(NOT WITH_SYSTEM_BOOST)
   list(APPEND ceph_common_deps ${ZLIB_LIBRARIES})
@@ -771,8 +780,8 @@ endif (WITH_MGR)
 set(librados_config_srcs
   librados-config.cc)
 add_executable(librados-config ${librados_config_srcs})
-target_link_libraries(librados-config librados global ${BLKID_LIBRARIES} ${RDMA_LIBRARIES}
-  ${CMAKE_DL_LIBS})
+target_link_libraries(librados-config librados global ${BLKID_LIBRARIES} ${VERBS_LIBRARY}
+  ${RDMACM_LIBRARY} ${CMAKE_DL_LIBS})
 
 install(TARGETS librados-config DESTINATION bin)
 
@@ -881,7 +890,7 @@ set(ceph_osd_srcs
 add_executable(ceph-osd ${ceph_osd_srcs})
 add_dependencies(ceph-osd erasure_code_plugins)
 target_link_libraries(ceph-osd osd os global-static ceph-common
-  ${BLKID_LIBRARIES} ${RDMA_LIBRARIES})
+  ${BLKID_LIBRARIES} ${VERBS_LIBRARY} ${RDMACM_LIBRARY})
 if(WITH_FUSE)
   target_link_libraries(ceph-osd ${FUSE_LIBRARIES})
 endif()
